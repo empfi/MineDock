@@ -1,58 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { Play, Square, Terminal as TerminalIcon, Send, RotateCw, Trash2 } from 'lucide-react';
-
-interface LogEntry {
-  id: number;
-  text: string;
-  isError: boolean;
-  timestamp: string;
-}
+import ConfirmDialog from '../components/ConfirmDialog';
 
 export default function Console() {
-  const { servers, selectedServerId, settings } = useStore();
+  const { servers, selectedServerId, settings, consoleLogs, appendConsoleLog, clearConsoleLogs } = useStore();
   const selectedServer = servers.find(s => s.id === selectedServerId);
 
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const logs = selectedServerId ? consoleLogs[selectedServerId] || [] : [];
   const [command, setCommand] = useState('');
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [confirmAction, setConfirmAction] = useState<'stop' | 'restart' | null>(null);
+  const commandDraft = useRef('');
   const [autoScroll, setAutoScroll] = useState(settings?.auto_scroll_console ?? true);
   
   const consoleEndRef = useRef<HTMLDivElement>(null);
-  const logIdCounter = useRef(0);
 
-  useEffect(() => {
-    setLogs([]); // Clear logs when switching server
-  }, [selectedServerId]);
 
-  useEffect(() => {
-    if (!selectedServerId) return;
-
-    const unlisten = listen('console-log', (event: any) => {
-      const { server_id, line, is_error } = event.payload;
-      
-      if (server_id === selectedServerId) {
-        setLogs(prev => {
-          const newLogs = [...prev, {
-            id: logIdCounter.current++,
-            text: line,
-            isError: is_error,
-            timestamp: new Date().toLocaleTimeString()
-          }];
-          // Keep only last 1000 lines to prevent memory issues
-          if (newLogs.length > 1000) {
-            return newLogs.slice(newLogs.length - 1000);
-          }
-          return newLogs;
-        });
-      }
-    });
-
-    return () => {
-      unlisten.then(f => f());
-    };
-  }, [selectedServerId]);
 
   useEffect(() => {
     if (autoScroll && consoleEndRef.current) {
@@ -95,6 +60,25 @@ export default function Console() {
     }
   }
 
+  const handleHistoryKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const history = logs.filter(log => log.text.startsWith('> ')).map(log => log.text.slice(2));
+    if (history.length === 0) return;
+    e.preventDefault();
+    if (e.key === 'ArrowUp') {
+      if (historyIndex === -1) commandDraft.current = command;
+      const next = Math.min(historyIndex + 1, history.length - 1);
+      setHistoryIndex(next);
+      setCommand(history[history.length - 1 - next]);
+    } else if (historyIndex > 0) {
+      const next = historyIndex - 1;
+      setHistoryIndex(next);
+      setCommand(history[history.length - 1 - next]);
+    } else if (historyIndex === 0) {
+      setHistoryIndex(-1);
+      setCommand(commandDraft.current);
+    }
+  };
   const handleCommand = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!command.trim() || !selectedServerId) return;
@@ -106,13 +90,10 @@ export default function Console() {
 
     try {
       await invoke('send_mc_command', { id: selectedServerId, command: command.trim() });
-      setLogs(prev => [...prev, {
-        id: logIdCounter.current++,
-        text: `> ${command.trim()}`,
-        isError: false,
-        timestamp: new Date().toLocaleTimeString()
-      }]);
+      appendConsoleLog(selectedServerId, `> ${command.trim()}`, false);
       setCommand('');
+      setHistoryIndex(-1);
+      commandDraft.current = '';
     } catch (err) {
       console.error(err);
       alert('Failed to send command: ' + err);
@@ -121,7 +102,7 @@ export default function Console() {
 
   if (!selectedServer) {
     return (
-      <div className="p-8 max-w-5xl mx-auto flex flex-col h-full items-center justify-center text-gray-500">
+      <div className="p-4 sm:p-6 lg:p-8 w-full flex flex-col h-full items-center justify-center text-gray-500">
         <TerminalIcon size={48} className="mb-4 text-gray-700" />
         <p>No server selected. Select a server from the sidebar.</p>
       </div>
@@ -154,10 +135,10 @@ export default function Console() {
             </button>
           ) : (
             <>
-              <button onClick={handleRestart} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
+              <button onClick={() => settings?.confirm_stop ? setConfirmAction('restart') : handleRestart()} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
                 <RotateCw size={14} /> Restart
               </button>
-              <button onClick={handleStop} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
+              <button onClick={() => settings?.confirm_stop ? setConfirmAction('stop') : handleStop()} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
                 <Square size={14} /> Stop
               </button>
             </>
@@ -169,7 +150,7 @@ export default function Console() {
             <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} className="rounded border-gray-600 bg-transparent text-blue-500 focus:ring-0" />
             Auto-scroll
           </label>
-          <button onClick={() => setLogs([])} className="p-1.5 text-gray-400 hover:text-white rounded ml-2" title="Clear Console">
+          <button onClick={() => selectedServerId && clearConsoleLogs(selectedServerId)} className="p-1.5 text-gray-400 hover:text-white rounded ml-2" title="Clear Console">
             <Trash2 size={16} />
           </button>
         </div>
@@ -203,6 +184,7 @@ export default function Console() {
             type="text"
             value={command}
             onChange={(e) => setCommand(e.target.value)}
+            onKeyDown={handleHistoryKeyDown}
             disabled={!isRunning}
             placeholder={isRunning ? "Type a command... (e.g. say Hello)" : "Server is offline"}
             className="flex-1 bg-[#09090a] border border-[#2a2b2f] rounded px-3 py-2 text-white font-mono text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50"
@@ -212,6 +194,19 @@ export default function Console() {
           </button>
         </form>
       </div>
+      {confirmAction && (
+        <ConfirmDialog
+          title={confirmAction === 'restart' ? 'Restart server?' : 'Stop server?'}
+          message={`${selectedServer.name} will disconnect all connected players.`}
+          confirmLabel={confirmAction === 'restart' ? 'Restart' : 'Stop'}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={() => {
+            const action = confirmAction;
+            setConfirmAction(null);
+            action === 'restart' ? handleRestart() : handleStop();
+          }}
+        />
+      )}
     </div>
   );
 }

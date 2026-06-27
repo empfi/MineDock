@@ -138,6 +138,12 @@ impl ProcessManager {
     }
 
     pub async fn stop_server(&self, server_id: i64) -> Result<(), String> {
+        let stop_command = {
+            let state = self.app.state::<DbState>();
+            let conn = state.db.lock().map_err(|_| "Failed to lock database")?;
+            let server = get_server(&conn, server_id).map_err(|e| e.to_string())?.ok_or("Server not found")?;
+            if server.server_type == "velocity" { b"end\n".as_slice() } else { b"stop\n".as_slice() }
+        };
         let mut processes = self.processes.lock().await;
         if let Some(stdin) = processes.get_mut(&server_id) {
             
@@ -150,7 +156,7 @@ impl ProcessManager {
             }
             self.app.emit("server-status-changed", (server_id, "stopping")).unwrap_or_default();
 
-            let _ = stdin.write_all(b"stop\n").await;
+            let _ = stdin.write_all(stop_command).await;
             let _ = stdin.flush().await;
             
         } else {

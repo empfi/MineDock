@@ -25,7 +25,7 @@ export default function Versions() {
 
   if (!selectedServer) {
     return (
-      <div className="p-8 max-w-5xl mx-auto flex items-center justify-center h-full">
+      <div className="p-4 sm:p-6 lg:p-8 w-full flex items-center justify-center h-full">
         <p className="text-gray-500">Select a server to manage versions.</p>
       </div>
     );
@@ -34,7 +34,7 @@ export default function Versions() {
   const versions = manifest?.versions.filter(v => filter === 'all' || v.type === filter) || [];
 
   return (
-    <div className="p-8 max-w-5xl mx-auto flex flex-col h-full">
+    <div className="p-4 sm:p-6 lg:p-8 w-full flex flex-col h-full">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Minecraft Versions</h1>
         <p className="text-gray-400">View and download Vanilla server jars.</p>

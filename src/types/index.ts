@@ -25,3 +25,10 @@ export interface AppSettings {
   auto_scroll_console: boolean;
   check_updates_startup: boolean;
 }
+
+export interface ConsoleLogEntry {
+  id: number;
+  text: string;
+  isError: boolean;
+  timestamp: string;
+}

@@ -41,13 +41,14 @@ export default function SettingsPage() {
       }
     } catch (e) {
       console.error(e);
+      alert(`Failed to open directory picker: ${e}`);
     }
   };
 
   if (!localSettings) return <div className="p-8 text-gray-400">Loading...</div>;
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 w-full">
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Settings</h1>

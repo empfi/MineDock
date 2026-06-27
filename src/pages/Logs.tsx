@@ -39,7 +39,7 @@ export default function Logs() {
   }
 
   return (
-    <div className="p-8 max-w-5xl mx-auto flex flex-col h-full">
+    <div className="p-4 sm:p-6 lg:p-8 w-full flex flex-col h-full">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Logs</h1>

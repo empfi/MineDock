@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import { useStore } from '../store';
 import { useNavigate } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { Play, Square, Trash2, FolderOpen, Settings as SettingsIcon } from 'lucide-react';
 import { Server } from '../types';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 export default function Servers() {
-  const { servers, fetchServers, setSelectedServer } = useStore();
+  const { servers, fetchServers, setSelectedServer, settings } = useStore();
+  const [pending, setPending] = useState<{ action: 'stop' | 'delete'; server: Server } | null>(null);
   const navigate = useNavigate();
 
   const handleStart = async (e: React.MouseEvent, id: number) => {
@@ -17,25 +20,29 @@ export default function Servers() {
     }
   };
 
-  const handleStop = async (e: React.MouseEvent, id: number) => {
-    e.stopPropagation();
-    try {
-      await invoke('stop_mc_server', { id });
-    } catch (err) {
-      console.error(err);
-    }
+  const stopServer = async (id: number) => {
+    try { await invoke('stop_mc_server', { id }); }
+    catch (err) { console.error(err); }
   };
 
-  const handleDelete = async (e: React.MouseEvent, id: number) => {
+  const handleStop = (e: React.MouseEvent, server: Server) => {
     e.stopPropagation();
-    if (confirm('Are you sure you want to delete this server? This only removes it from the list, not the files.')) {
-      try {
-        await invoke('remove_server', { id });
-        fetchServers();
-      } catch (err) {
-        console.error(err);
-      }
-    }
+    if (settings?.confirm_stop) setPending({ action: 'stop', server });
+    else stopServer(server.id!);
+  };
+
+  const deleteServer = async (id: number) => {
+    try {
+      await invoke('remove_server', { id });
+      setPending(null);
+      fetchServers();
+    } catch (err) { console.error(err); }
+  };
+
+  const handleDelete = (e: React.MouseEvent, server: Server) => {
+    e.stopPropagation();
+    if (settings?.confirm_delete) setPending({ action: 'delete', server });
+    else deleteServer(server.id!);
   };
 
   const openFolder = async (e: React.MouseEvent, path: string) => {
@@ -50,7 +57,7 @@ export default function Servers() {
   };
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 w-full">
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Servers</h1>
@@ -125,7 +132,7 @@ export default function Servers() {
                       </button>
                     ) : (
                       <button 
-                        onClick={(e) => handleStop(e, server.id!)}
+                        onClick={(e) => handleStop(e, server)}
                         className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#2a2b2f] rounded"
                         title="Stop Server"
                       >
@@ -154,7 +161,7 @@ export default function Servers() {
                     </button>
 
                     <button 
-                      onClick={(e) => handleDelete(e, server.id!)}
+                      onClick={(e) => handleDelete(e, server)}
                       className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#2a2b2f] rounded"
                       title="Delete Server Profile"
                     >
@@ -174,6 +181,13 @@ export default function Servers() {
           </tbody>
         </table>
       </div>
+      {pending && <ConfirmDialog
+        title={pending.action === 'stop' ? 'Stop server?' : 'Delete server profile?'}
+        message={pending.action === 'stop' ? `${pending.server.name} will disconnect all connected players.` : `${pending.server.name} will be removed from MineDock. Server files remain on disk.`}
+        confirmLabel={pending.action === 'stop' ? 'Stop' : 'Delete'}
+        onCancel={() => setPending(null)}
+        onConfirm={() => pending.action === 'stop' ? (setPending(null), stopServer(pending.server.id!)) : deleteServer(pending.server.id!)}
+      />}
     </div>
   );
 }

@@ -10,21 +10,21 @@ export default function Overview() {
   const totalServers = servers.length;
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-8">
+    <div className="p-4 sm:p-6 lg:p-8 w-full">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Overview</h1>
           <p className="text-gray-400">Welcome to MineDock server manager.</p>
         </div>
         <button
           onClick={() => navigate('/wizard')}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors"
+          className="self-start sm:self-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors"
         >
           Create Server
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-8">
         <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg p-6 flex flex-col">
           <div className="flex items-center gap-3 text-gray-400 mb-2">
             <Server size={20} />
@@ -43,7 +43,7 @@ export default function Overview() {
       </div>
 
       <h2 className="text-xl font-bold text-white mb-4">Quick Access</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
         {servers.map(server => (
           <div key={server.id} className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg overflow-hidden hover:border-gray-600 transition-colors cursor-pointer group" onClick={() => {
             setSelectedServer(server.id || null);

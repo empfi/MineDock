@@ -37,51 +37,55 @@ function Sidebar() {
   ];
 
   return (
-    <div className="w-64 bg-[#141517] border-r border-[#2a2b2f] h-screen flex flex-col flex-shrink-0">
-      <div className="h-16 flex items-center px-6 border-b border-[#2a2b2f]">
+    <div className="w-16 sm:w-20 lg:w-64 bg-[#141517] border-r border-[#2a2b2f] h-screen flex flex-col flex-shrink-0">
+      <div className="h-16 flex items-center justify-center lg:justify-start px-2 lg:px-6 border-b border-[#2a2b2f]">
         <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
           <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
             <Server size={14} className="text-white" />
           </div>
-          MineDock
+          <span className="hidden lg:inline">MineDock</span>
         </h1>
       </div>
 
       <div className="flex-1 overflow-y-auto py-4 flex flex-col gap-6">
-        <nav className="px-4 space-y-1">
+        <nav className="px-2 lg:px-4 space-y-1">
           {links.map(link => (
             <NavLink
               key={link.to}
               to={link.to}
               end={link.exact}
+              aria-label={link.label}
+              title={link.label}
               className={({ isActive }) => cn(
-                "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                "flex items-center justify-center lg:justify-start gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
                 isActive ? "bg-[#2a2b2f] text-white" : "text-gray-400 hover:text-gray-200 hover:bg-[#202124]"
               )}
             >
               <link.icon size={18} />
-              {link.label}
+              <span className="hidden lg:inline">{link.label}</span>
             </NavLink>
           ))}
         </nav>
 
         {selectedServer && (
           <div>
-            <div className="px-6 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <div className="hidden lg:block px-6 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider truncate">
               {selectedServer.name}
             </div>
-            <nav className="px-4 space-y-1">
+            <nav className="px-2 lg:px-4 space-y-1">
               {serverLinks.map(link => (
                 <NavLink
                   key={link.to}
                   to={link.to}
+                  aria-label={link.label}
+                  title={link.label}
                   className={({ isActive }) => cn(
-                    "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                    "flex items-center justify-center lg:justify-start gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
                     isActive ? "bg-blue-600/10 text-blue-500" : "text-gray-400 hover:text-gray-200 hover:bg-[#202124]"
                   )}
                 >
                   <link.icon size={18} />
-                  {link.label}
+                  <span className="hidden lg:inline">{link.label}</span>
                 </NavLink>
               ))}
             </nav>
@@ -89,13 +93,15 @@ function Sidebar() {
         )}
       </div>
 
-      <div className="p-4 border-t border-[#2a2b2f]">
+      <div className="p-2 lg:p-4 border-t border-[#2a2b2f]">
         <NavLink
           to="/wizard"
-          className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+          aria-label="New Server"
+          title="New Server"
+          className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white px-2 lg:px-4 py-2 rounded-md text-sm font-medium transition-colors"
         >
           <Plus size={18} />
-          New Server
+          <span className="hidden lg:inline">New Server</span>
         </NavLink>
       </div>
     </div>
@@ -103,7 +109,7 @@ function Sidebar() {
 }
 
 function Layout() {
-  const { fetchServers, fetchSettings, updateServerStatus } = useStore();
+  const { fetchServers, fetchSettings, updateServerStatus, appendConsoleLog } = useStore();
 
   useEffect(() => {
     fetchServers();
@@ -114,15 +120,21 @@ function Layout() {
       updateServerStatus(id, status);
     });
 
+    const unlistenConsole = listen('console-log', (event: any) => {
+      const { server_id, line, is_error } = event.payload;
+      appendConsoleLog(server_id, line, is_error);
+    });
+
     return () => {
       unlisten.then(f => f());
+      unlistenConsole.then(f => f());
     };
   }, []);
 
   return (
     <div className="flex w-full h-screen overflow-hidden bg-[#0f0f11] text-gray-200 font-sans">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 min-w-0 overflow-y-auto">
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/servers" element={<Servers />} />

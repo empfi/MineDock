@@ -40,6 +40,8 @@ pub fn run() {
             commands::send_mc_command,
             commands::get_mc_versions,
             commands::download_mc_version,
+            commands::get_software_versions,
+            commands::download_software,
             commands::get_directory_contents,
             commands::read_file_content,
             commands::save_file_content,

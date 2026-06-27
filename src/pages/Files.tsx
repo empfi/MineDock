@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
 import { File as FileIcon, Folder, Trash2, ArrowUpCircle, Save, X, PlusCircle, Edit2 } from 'lucide-react';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 interface FileInfo {
   name: string;
@@ -30,6 +31,7 @@ export default function Files() {
 
   const [editingFile, setEditingFile] = useState<{name: string, content: string} | null>(null);
   const [saving, setSaving] = useState(false);
+  const [fileToDelete, setFileToDelete] = useState<FileInfo | null>(null);
 
   useEffect(() => {
     if (selectedServer) {
@@ -107,24 +109,22 @@ export default function Files() {
     }
   };
 
-  const deleteFile = async (e: React.MouseEvent, file: FileInfo) => {
-    e.stopPropagation();
+  const performDelete = async (file: FileInfo) => {
     if (!selectedServer) return;
-
-    if (settings?.confirm_delete) {
-      if (!confirm(`Are you sure you want to delete ${file.name}?`)) return;
-    }
-
     const pathToDelete = currentPath === '.' ? file.name : `${currentPath}/${file.name}`;
     try {
-      await invoke('delete_file_or_folder', {
-        baseDir: selectedServer.install_path,
-        subPath: pathToDelete
-      });
+      await invoke('delete_file_or_folder', { baseDir: selectedServer.install_path, subPath: pathToDelete });
+      setFileToDelete(null);
       loadFiles(currentPath);
     } catch (err: any) {
-      alert("Failed to delete: " + err);
+      alert('Failed to delete: ' + err);
     }
+  };
+
+  const deleteFile = (e: React.MouseEvent, file: FileInfo) => {
+    e.stopPropagation();
+    if (settings?.confirm_delete) setFileToDelete(file);
+    else performDelete(file);
   };
 
   const createFolder = async () => {
@@ -178,7 +178,7 @@ export default function Files() {
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto h-full flex flex-col">
+    <div className="p-4 sm:p-6 lg:p-8 w-full h-full flex flex-col">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">File Manager</h1>
@@ -199,7 +199,7 @@ export default function Files() {
         </div>
       )}
 
-      <div className="flex-1 bg-[#1c1d21] border border-[#2a2b2f] rounded-lg overflow-hidden flex flex-col">
+      <div className="flex-1 bg-[#1c1d21] border border-[#2a2b2f] rounded-lg overflow-y-auto">
         <table className="w-full text-left">
           <thead className="bg-[#141517] border-b border-[#2a2b2f] text-xs font-semibold text-gray-400 uppercase tracking-wider sticky top-0">
             <tr>
@@ -209,10 +209,10 @@ export default function Files() {
               <th className="px-6 py-4 text-right"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#2a2b2f] overflow-y-auto block h-[calc(100vh-250px)]" style={{ display: 'table-row-group' }}>
+          <tbody className="divide-y divide-[#2a2b2f]">
             
             {currentPath !== '.' && (
-              <tr className="hover:bg-[#202124] transition-colors cursor-pointer" onClick={navigateUp}>
+              <tr className="h-14 hover:bg-[#202124] transition-colors cursor-pointer" onClick={navigateUp}>
                 <td colSpan={4} className="px-6 py-3 font-medium text-blue-400 flex items-center gap-3">
                   <ArrowUpCircle size={18} /> ..
                 </td>
@@ -225,7 +225,7 @@ export default function Files() {
               <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-500">Directory is empty.</td></tr>
             ) : (
               files.map(file => (
-                <tr key={file.name} className="hover:bg-[#202124] transition-colors cursor-pointer group" onClick={() => handleFileClick(file)}>
+                <tr key={file.name} className="h-14 hover:bg-[#202124] transition-colors cursor-pointer group" onClick={() => handleFileClick(file)}>
                   <td className="px-6 py-3 font-medium text-white flex items-center gap-3">
                     {file.is_dir ? <Folder size={18} className="text-blue-400" /> : <FileIcon size={18} className="text-gray-400" />}
                     {file.name}
@@ -247,6 +247,15 @@ export default function Files() {
           </tbody>
         </table>
       </div>
+      {fileToDelete && (
+        <ConfirmDialog
+          title={`Delete ${fileToDelete.is_dir ? 'folder' : 'file'}?`}
+          message={`${fileToDelete.name} will be permanently deleted${fileToDelete.is_dir ? ' with all contents' : ''}.`}
+          confirmLabel="Delete"
+          onCancel={() => setFileToDelete(null)}
+          onConfirm={() => performDelete(fileToDelete)}
+        />
+      )}
     </div>
   );
 }

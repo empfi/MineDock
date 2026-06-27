@@ -10,7 +10,7 @@ With MineDock, you can create, download, configure, start, stop, and manage real
 
 - **Multiple Local Servers**: Manage multiple Minecraft server instances locally.
 - **Server Creation Wizard**: A guided setup for naming, configuring RAM, ports, and accepting the EULA.
-- **Version Downloader**: Automatically fetches available Vanilla Minecraft versions using Mojang's official API, and downloads the correct server `.jar` seamlessly.
+- **Software Downloader**: Installs Vanilla, Paper, Purpur, and Velocity builds from their official download services.
 - **Process Management**: A robust backend written in Rust spawns and tracks your Minecraft servers independently. You can view real-time live console output (stdout/stderr) and issue commands directly.
 - **File Manager**: Browse, edit, create, and delete server files through a secure, built-in visual file manager.
 - **Visual Properties Editor**: An intuitive interface for tweaking `server.properties` alongside a raw configuration editor.
@@ -84,7 +84,6 @@ MineDock spawns Minecraft using `tokio::process::Command` in the Rust backend. I
 ### Known Limitations
 
 - **Java Only**: Currently designed specifically for Minecraft Java Edition. Bedrock is not supported in v1.
-- **Vanilla Only**: The automated downloader only fetches Vanilla jars from Mojang.
 - **Platform Support**: Built and tested primarily for Windows, though Tauri is cross-platform. 
 - **Resource Monitoring**: Advanced CPU/RAM graphing per process is not fully implemented; it currently displays system totals and allocated limits.
 
@@ -92,7 +91,6 @@ MineDock spawns Minecraft using `tokio::process::Command` in the Rust backend. I
 
 ### Future Roadmap
 
-- [ ] **Paper/Purpur Support**: Add automatic downloading and management of optimized server forks.
 - [ ] **Plugin Marketplace**: Browse and install Spigot/Paper plugins directly from the UI.
 - [ ] **Scheduled Backups**: Set up cron-like schedules for automated world backups.
 - [ ] **Per-Server Resource Graphs**: Granular monitoring of CPU and RAM usage for specific server processes.

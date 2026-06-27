@@ -2,7 +2,7 @@ use tauri::{AppHandle, State};
 use crate::database::{DbState, get_servers, add_server, delete_server, get_settings, update_settings, get_server};
 use crate::models::{Server, AppSettings};
 use crate::process::ProcessManager;
-use crate::downloader::{VersionManifest, fetch_versions, download_server_jar};
+use crate::downloader::{VersionManifest, fetch_versions, download_server_jar, fetch_software_versions, download_server_software};
 use crate::files::{FileInfo, list_directory, read_text_file, write_text_file, delete_file, create_folder};
 use crate::backups::{BackupInfo, create_backup, list_backups, restore_backup, delete_backup as del_backup};
 
@@ -62,6 +62,15 @@ pub async fn get_mc_versions() -> Result<VersionManifest, String> {
     fetch_versions().await
 }
 
+#[tauri::command]
+pub async fn get_software_versions(server_type: String) -> Result<Vec<String>, String> {
+    fetch_software_versions(&server_type).await
+}
+
+#[tauri::command]
+pub async fn download_software(app: AppHandle, server_type: String, version: String, path: String) -> Result<(), String> {
+    download_server_software(app, server_type, version, path).await
+}
 #[tauri::command]
 pub async fn download_mc_version(app: AppHandle, url: String, path: String) -> Result<(), String> {
     download_server_jar(app, url, path).await

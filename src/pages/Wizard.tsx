@@ -3,14 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ChevronRight, ChevronLeft, Check, Folder, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Check, Folder, Loader2, Box } from 'lucide-react';
 import { Server } from '../types';
 
-interface VersionManifest {
-  latest: { release: string; snapshot: string };
-  versions: { id: string; type: string; url: string; time: string; releaseTime: string }[];
-}
-
+const SOFTWARE = [
+  { id: 'vanilla', name: 'Vanilla', description: 'Official Minecraft server', icon: undefined },
+  { id: 'paper', name: 'Paper', description: 'Fast plugin server', icon: '/software/paper.svg' },
+  { id: 'purpur', name: 'Purpur', description: 'Configurable Paper fork', icon: '/software/purpur.svg' },
+  { id: 'velocity', name: 'Velocity', description: 'Modern proxy server', icon: '/software/velocity.svg' },
+] as const;
 export default function Wizard() {
   const navigate = useNavigate();
   const { settings, fetchServers } = useStore();
@@ -21,8 +22,8 @@ export default function Wizard() {
   // Form State
   const [name, setName] = useState('My Minecraft Server');
   const [installPath, setInstallPath] = useState('');
+  const [serverType, setServerType] = useState('vanilla');
   const [version, setVersion] = useState('');
-  const [versionUrl, setVersionUrl] = useState('');
   const [ramMin, setRamMin] = useState(1024);
   const [ramMax, setRamMax] = useState(4096);
   const [port, setPort] = useState(25565);
@@ -30,7 +31,7 @@ export default function Wizard() {
   const [eulaAccepted, setEulaAccepted] = useState(false);
 
   // External Data
-  const [versions, setVersions] = useState<VersionManifest | null>(null);
+  const [versions, setVersions] = useState<string[]>([]);
   const [sysMemory, setSysMemory] = useState<number>(8192);
   const [detectedJavas, setDetectedJavas] = useState<string[]>([]);
 
@@ -48,18 +49,16 @@ export default function Wizard() {
   }, [settings, name]);
 
   useEffect(() => {
-    if (step === 3 && !versions) {
+    if (step === 3) {
       setLoading(true);
-      invoke<VersionManifest>('get_mc_versions')
+      setError(null);
+      invoke<string[]>('get_software_versions', { serverType })
         .then(data => {
           setVersions(data);
-          if (!version) {
-            setVersion(data.latest.release);
-            const v = data.versions.find(v => v.id === data.latest.release);
-            if (v) setVersionUrl(v.url);
-          }
+          setVersion(data[0] || '');
+          if (data.length === 0) setError(`No ${serverType} versions are currently available.`);
         })
-        .catch(e => setError(e))
+        .catch(e => setError(String(e)))
         .finally(() => setLoading(false));
     }
     if (step === 4) {
@@ -77,7 +76,7 @@ export default function Wizard() {
         .catch(console.error)
         .finally(() => setLoading(false));
     }
-  }, [step]);
+  }, [step, serverType]);
 
   const selectDir = async () => {
     try {
@@ -88,11 +87,12 @@ export default function Wizard() {
       }
     } catch (e) {
       console.error(e);
+      setError(`Failed to open directory picker: ${e}`);
     }
   };
 
   const handleInstall = async () => {
-    if (!eulaAccepted) {
+    if (serverType !== 'velocity' && !eulaAccepted) {
       setError('You must accept the EULA to install the server.');
       return;
     }
@@ -106,7 +106,7 @@ export default function Wizard() {
       
       // 2. Download jar
       setInstallStatus('Downloading server jar...');
-      const jarName = `server-${version}.jar`;
+      const jarName = `${serverType}-${version}.jar`;
       const jarPath = `${installPath}\\${jarName}`;
       
       const unlisten = await listen<{downloaded: number, total: number}>('download-progress', (event) => {
@@ -114,24 +114,23 @@ export default function Wizard() {
         setDownloadProgress((downloaded / total) * 100);
       });
 
-      await invoke('download_mc_version', { url: versionUrl, path: jarPath });
+      await invoke('download_software', { serverType, version, path: jarPath });
       unlisten();
 
-      // 3. Accept EULA
-      setInstallStatus('Accepting EULA...');
-      await invoke('accept_eula', { serverPath: installPath });
-
-      // 4. Create server.properties
-      setInstallStatus('Creating server.properties...');
-      const props = `server-port=${port}\nmotd=${name}\n`;
-      await invoke('save_file_content', { baseDir: installPath, subPath: 'server.properties', content: props });
+      if (serverType !== 'velocity') {
+        setInstallStatus('Accepting EULA...');
+        await invoke('accept_eula', { serverPath: installPath });
+        setInstallStatus('Creating server.properties...');
+        const props = `server-port=${port}\nmotd=${name}\n`;
+        await invoke('save_file_content', { baseDir: installPath, subPath: 'server.properties', content: props });
+      }
 
       // 5. Save Server Profile
       setInstallStatus('Saving profile...');
       const newServer: Server = {
         name,
         minecraft_version: version,
-        server_type: 'vanilla',
+        server_type: serverType,
         install_path: installPath,
         jar_path: jarName, // relative or absolute depending on how process.rs is written. We use relative to install_path in process.rs.
         status: 'offline',
@@ -155,7 +154,7 @@ export default function Wizard() {
   };
 
   return (
-    <div className="p-8 max-w-3xl mx-auto flex flex-col h-full">
+    <div className="p-4 sm:p-6 lg:p-8 w-full flex flex-col h-full">
       <div className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Create New Server</h1>
         
@@ -211,33 +210,49 @@ export default function Wizard() {
         )}
 
         {step === 3 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
-            <h2 className="text-xl font-semibold text-white">3. Minecraft Version</h2>
-            <p className="text-gray-400 text-sm">Select the Vanilla Minecraft version to install.</p>
-            
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-4">
+            <div>
+              <h2 className="text-xl font-semibold text-white">3. Server Software</h2>
+              <p className="text-gray-400 text-sm mt-1">Choose software, then select an available version.</p>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {SOFTWARE.map(software => (
+                <button
+                  key={software.id}
+                  type="button"
+                  onClick={() => {
+                    setServerType(software.id);
+                    setVersion('');
+                    if (software.id === 'velocity' && port === 25565) setPort(25577);
+                    if (software.id !== 'velocity' && port === 25577) setPort(25565);
+                  }}
+                  className={`flex items-center gap-3 p-4 rounded-lg border text-left transition-colors ${serverType === software.id ? 'border-blue-500 bg-blue-500/10' : 'border-[#2a2b2f] bg-[#141517] hover:border-gray-600'}`}
+                >
+                  {software.icon ? <img src={software.icon} alt="" className="w-9 h-9 object-contain" /> : <Box size={32} className="text-emerald-400" />}
+                  <span className="min-w-0">
+                    <span className="block font-semibold text-white">{software.name}</span>
+                    <span className="block text-xs text-gray-500 truncate">{software.description}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
             {loading ? (
               <div className="flex items-center gap-3 text-gray-400 py-4">
-                <Loader2 size={20} className="animate-spin" /> Fetching versions...
+                <Loader2 size={20} className="animate-spin" /> Fetching {serverType} versions...
               </div>
             ) : (
               <select
                 value={version}
-                onChange={(e) => {
-                  setVersion(e.target.value);
-                  const v = versions?.versions.find(v => v.id === e.target.value);
-                  if (v) setVersionUrl(v.url);
-                }}
+                onChange={(e) => setVersion(e.target.value)}
                 className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-4 py-3 text-white focus:outline-none focus:border-blue-500 appearance-none"
               >
-                {versions?.versions.filter(v => v.type === 'release').map(v => (
-                  <option key={v.id} value={v.id}>{v.id} (Release)</option>
-                ))}
+                {versions.map(item => <option key={item} value={item}>{item}</option>)}
               </select>
             )}
           </div>
         )}
 
-        {step === 4 && (
+     {step === 4 && (
           <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
             <h2 className="text-xl font-semibold text-white">4. RAM Allocation</h2>
             <p className="text-gray-400 text-sm">Allocate memory for your server. (System has {sysMemory} MB total)</p>
@@ -329,26 +344,26 @@ export default function Wizard() {
 
         {step === 7 && (
           <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
-            <h2 className="text-xl font-semibold text-white">7. Minecraft EULA</h2>
-            <div className="bg-[#0f0f11] border border-[#2a2b2f] p-4 rounded-md text-sm text-gray-400 h-32 overflow-y-auto">
-              By changing the setting below to TRUE you are indicating your agreement to our EULA (https://aka.ms/MinecraftEULA).
-              <br/><br/>
-              You must accept the End User License Agreement before starting a Minecraft server.
-            </div>
-            
-            <label className="flex items-center gap-3 cursor-pointer p-4 bg-[#2a2b2f]/30 rounded-md border border-[#2a2b2f] hover:border-blue-500/50 transition-colors">
-              <input 
-                type="checkbox" 
-                checked={eulaAccepted}
-                onChange={(e) => setEulaAccepted(e.target.checked)}
-                className="w-5 h-5 rounded border-[#2a2b2f] bg-[#0f0f11] text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-white font-medium">I accept the Minecraft EULA</span>
-            </label>
+            <h2 className="text-xl font-semibold text-white">7. {serverType === 'velocity' ? 'Ready to Install' : 'Minecraft EULA'}</h2>
+            {serverType === 'velocity' ? (
+              <div className="bg-[#0f0f11] border border-[#2a2b2f] p-4 rounded-md text-sm text-gray-400">
+                Velocity is a proxy and does not require a Minecraft server EULA file. Continue to install the selected build.
+              </div>
+            ) : (
+              <>
+                <div className="bg-[#0f0f11] border border-[#2a2b2f] p-4 rounded-md text-sm text-gray-400 h-32 overflow-y-auto">
+                  By checking below you agree to the Minecraft EULA at https://aka.ms/MinecraftEULA.
+                </div>
+                <label className="flex items-center gap-3 cursor-pointer p-4 bg-[#2a2b2f]/30 rounded-md border border-[#2a2b2f] hover:border-blue-500/50 transition-colors">
+                  <input type="checkbox" checked={eulaAccepted} onChange={(e) => setEulaAccepted(e.target.checked)} className="w-5 h-5 rounded border-[#2a2b2f] bg-[#0f0f11] text-blue-600 focus:ring-blue-500" />
+                  <span className="text-white font-medium">I accept the Minecraft EULA</span>
+                </label>
+              </>
+            )}
           </div>
         )}
 
-        {step === 8 && (
+     {step === 8 && (
           <div className="space-y-6 animate-in fade-in flex flex-col items-center justify-center py-12">
             <Loader2 size={48} className="animate-spin text-blue-500 mb-4" />
             <h2 className="text-2xl font-bold text-white">Installing Server</h2>
@@ -383,9 +398,14 @@ export default function Wizard() {
                 setError('Installation path is required');
                 return;
               }
+              if (step === 3 && !version) {
+                setError('Select an available software version');
+                return;
+              }
               setStep(step + 1);
             }}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md font-medium transition-colors"
+            disabled={step === 3 && (loading || !version)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
           >
             Next <ChevronRight size={18} />
           </button>
@@ -394,7 +414,7 @@ export default function Wizard() {
         {step === 7 && (
           <button
             onClick={handleInstall}
-            disabled={!eulaAccepted}
+            disabled={serverType !== 'velocity' && !eulaAccepted}
             className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
           >
             <Check size={18} /> Install Server
