@@ -1,5 +1,5 @@
 use tauri::{AppHandle, State};
-use crate::database::{DbState, get_servers, add_server, delete_server, get_settings, update_settings, get_server};
+use crate::database::{DbState, get_servers, add_server, delete_server, get_settings, update_settings, get_server, update_server_port};
 use crate::models::{Server, AppSettings};
 use crate::process::ProcessManager;
 use crate::downloader::{VersionManifest, fetch_versions, download_server_jar, fetch_software_versions, download_server_software};
@@ -28,6 +28,12 @@ pub fn create_new_server(state: State<DbState>, server: Server) -> Result<i64, S
 pub fn remove_server(state: State<DbState>, id: i64) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
     delete_server(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_server_port(state: State<DbState>, id: i64, port: i32) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
+    update_server_port(&conn, id, port).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -33,6 +33,7 @@ pub fn run() {
             commands::fetch_server,
             commands::create_new_server,
             commands::remove_server,
+            commands::save_server_port,
             commands::fetch_settings,
             commands::save_settings,
             commands::start_mc_server,

@@ -80,8 +80,26 @@ export default function Properties() {
   const handleSave = async () => {
     if (!selectedServer) return;
     setSaving(true);
+    setError(null);
     try {
       const contentToSave = mode === 'visual' ? stringifyProperties(parsedProps, rawProps) : rawProps;
+
+      // Extract port to check for conflicts and save to DB
+      const portMatch = contentToSave.match(/^server-port=(\d+)/m);
+      if (portMatch) {
+         const newPort = parseInt(portMatch[1]);
+         if (newPort !== selectedServer.port) {
+            const portInUse = servers.some(s => s.id !== selectedServer.id && s.port === newPort);
+            if (portInUse) {
+               setError(`Cannot save: Port ${newPort} is already allocated to another server.`);
+               setSaving(false);
+               return;
+            }
+            await invoke('save_server_port', { id: selectedServer.id, port: newPort });
+            useStore.getState().fetchServers();
+         }
+      }
+
       await invoke('save_file_content', {
         baseDir: selectedServer.install_path,
         subPath: 'server.properties',

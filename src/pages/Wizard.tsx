@@ -14,7 +14,7 @@ const SOFTWARE = [
 ] as const;
 export default function Wizard() {
   const navigate = useNavigate();
-  const { settings, fetchServers } = useStore();
+  const { servers, settings, fetchServers } = useStore();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -401,6 +401,13 @@ export default function Wizard() {
               if (step === 3 && !version) {
                 setError('Select an available software version');
                 return;
+              }
+              if (step === 5) {
+                const portInUse = servers.some(s => s.port === port);
+                if (portInUse) {
+                   setError(`Port ${port} is already in use by another server.`);
+                   return;
+                }
               }
               setStep(step + 1);
             }}
