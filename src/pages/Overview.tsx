@@ -1,9 +1,84 @@
-import { useStore } from '../store';
-import { Server, Activity } from 'lucide-react';
+import { useStore, PerformanceTick } from '../store';
+import { Server, Activity, Cpu } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+function MiniChart({ data, color, label, maxVal }: {
+  data: PerformanceTick[];
+  color: string;
+  label: string;
+  maxVal?: number;
+}) {
+  const width = 220;
+  const height = 64;
+  const padding = 4;
+  const chartWidth = width - padding * 2;
+  const chartHeight = height - padding * 2;
+
+  const values = data.map(d => label === 'CPU' ? d.cpu : d.memory);
+  const latest = values.length > 0 ? values[values.length - 1] : 0;
+  const max = maxVal ?? Math.max(...values, 1);
+
+  // Clamp each value so spikes never exceed the chart area
+  const clamp = (v: number) => Math.max(0, Math.min(v, max));
+
+  const points = values.map((v, i) => {
+    const x = padding + (i / Math.max(values.length - 1, 1)) * chartWidth;
+    const y = padding + chartHeight - (clamp(v) / max) * chartHeight;
+    return `${x},${y}`;
+  });
+
+  const pathD = points.length > 1 ? `M ${points.join(' L ')}` : '';
+  const fillD = points.length > 1
+    ? `M ${padding},${padding + chartHeight} L ${points.join(' L ')} L ${padding + chartWidth},${padding + chartHeight} Z`
+    : '';
+
+  const strokeColor = color === 'blue' ? '#3b82f6' : '#10b981';
+  const clipId = `chart-clip-${label}`;
+
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="flex justify-between items-center mb-1">
+        <span className="text-xs text-gray-400">{label}</span>
+        <span className={`text-sm font-bold ${color === 'blue' ? 'text-blue-400' : 'text-emerald-400'}`}>
+          {label === 'CPU' ? `${latest.toFixed(1)}%` : `${latest} MB`}
+        </span>
+      </div>
+      {/* overflow-hidden + clipPath prevent line spikes from escaping the card */}
+      <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="overflow-hidden">
+        <defs>
+          <linearGradient id={`fill-grad-${label}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={strokeColor} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={strokeColor} stopOpacity="0.01" />
+          </linearGradient>
+          <clipPath id={clipId}>
+            <rect x={padding} y={padding} width={chartWidth} height={chartHeight} />
+          </clipPath>
+        </defs>
+        <g clipPath={`url(#${clipId})`}>
+          {fillD && <path d={fillD} fill={`url(#fill-grad-${label})`} />}
+          {pathD && (
+            <path
+              d={pathD}
+              fill="none"
+              stroke={strokeColor}
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+        </g>
+        {values.length === 0 && (
+          <text x={width / 2} y={height / 2} textAnchor="middle" fill="#4b5563" fontSize="10">
+            Waiting for data...
+          </text>
+        )}
+      </svg>
+    </div>
+  );
+}
+
 export default function Overview() {
-  const { servers, setSelectedServer } = useStore();
+  const { servers, serverStats, setSelectedServer } = useStore();
   const navigate = useNavigate();
 
   const runningServers = servers.filter(s => s.status === 'online' || s.status === 'starting');
@@ -42,39 +117,47 @@ export default function Overview() {
         </div>
       </div>
 
-      <h2 className="text-xl font-bold text-white mb-4">Quick Access</h2>
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
-        {servers.map(server => (
-          <div key={server.id} className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg overflow-hidden hover:border-gray-600 transition-colors cursor-pointer group" onClick={() => {
-            setSelectedServer(server.id || null);
-            navigate('/console');
-          }}>
-            <div className="p-5 border-b border-[#2a2b2f]">
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="font-bold text-lg text-white group-hover:text-blue-400 transition-colors">{server.name}</h3>
-                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                  server.status === 'online' ? 'bg-emerald-500/10 text-emerald-400' :
-                  server.status === 'starting' ? 'bg-amber-500/10 text-amber-400' :
-                  server.status === 'stopping' ? 'bg-red-500/10 text-red-400' :
-                  'bg-gray-500/10 text-gray-400'
-                }`}>
-                  {server.status}
-                </span>
-              </div>
-              <p className="text-sm text-gray-400 mb-1">{server.minecraft_version} • {server.server_type}</p>
-            </div>
-            <div className="bg-[#141517] px-5 py-3 flex justify-between items-center text-sm">
-              <span className="text-gray-500">Port {server.port}</span>
-              <span className="text-gray-500">{server.ram_max} MB RAM</span>
-            </div>
+      {/* Performance Graphs for running servers */}
+      {runningServers.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+            <Cpu size={18} className="text-blue-400" />
+            Performance Monitor
+          </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {runningServers.map(server => {
+              const ticks = serverStats[server.id!] || [];
+              return (
+                <div
+                  key={server.id}
+                  className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg p-5 cursor-pointer hover:border-gray-600 transition-colors"
+                  onClick={() => { setSelectedServer(server.id || null); navigate('/console'); }}
+                >
+                  <div className="flex justify-between items-center mb-4">
+                    <div>
+                      <h3 className="font-bold text-white">{server.name}</h3>
+                      <p className="text-xs text-gray-500">{server.minecraft_version} · {server.server_type}</p>
+                    </div>
+                    <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500/10 text-emerald-400">
+                      {server.status.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex gap-6">
+                    <MiniChart data={ticks} color="blue" label="CPU" maxVal={100} />
+                    <MiniChart data={ticks} color="emerald" label="RAM" maxVal={server.ram_max} />
+                  </div>
+                  {ticks.length === 0 && (
+                    <p className="text-xs text-gray-600 mt-2 text-center">
+                      Collecting metrics... (updates every 2s)
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        ))}
-        {servers.length === 0 && (
-          <div className="col-span-full py-12 text-center text-gray-500 border border-dashed border-[#2a2b2f] rounded-lg">
-            No servers yet. Click "Create Server" to get started.
-          </div>
-        )}
-      </div>
+        </div>
+      )}
+
     </div>
   );
 }

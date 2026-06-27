@@ -56,7 +56,7 @@ pub fn list_backups(server_path: &str) -> Result<Vec<BackupInfo>, String> {
     let backup_dir = Path::new(server_path).join(".minedock").join("backups");
     let mut backups = Vec::new();
 
-    if backup_dir.exists() {
+    if backup_dir.exists() && backup_dir.is_dir() {
         for entry in std::fs::read_dir(backup_dir).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();

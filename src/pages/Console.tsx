@@ -1,8 +1,68 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
-import { Play, Square, Terminal as TerminalIcon, Send, RotateCw, Trash2 } from 'lucide-react';
-import ConfirmDialog from '../components/ConfirmDialog';
+import { Terminal as TerminalIcon, Send, Trash2, Search, ChevronUp, ChevronDown, X, ArrowDown } from 'lucide-react';
+import { notify } from '../components/Notifications';
+
+function parseLogLine(text: string, isError: boolean) {
+  const lower = text.toLowerCase();
+  
+  let colorClass = 'text-gray-300';
+  if (text.startsWith('>')) {
+    colorClass = 'text-blue-400';
+  } else if (lower.includes('error') || lower.includes('fatal') || lower.includes('severe') || lower.includes('exception')) {
+    colorClass = 'text-red-400';
+  } else if (lower.includes('warn') || lower.includes('warning')) {
+    colorClass = 'text-amber-400';
+  } else if (lower.includes('info')) {
+    colorClass = 'text-gray-300';
+  } else if (isError) {
+    colorClass = 'text-gray-400';
+  }
+
+  const errMatch = text.match(/^(\[\d{2}:\d{2}:\d{2}\]\s*\[[^\]]+ERR(?:OR)?\]:?|\[\d{2}:\d{2}:\d{2}\s+ERR(?:OR)?\]:?)/i);
+  const warnMatch = text.match(/^(\[\d{2}:\d{2}:\d{2}\]\s*\[[^\]]+WARN(?:ING)?\]:?|\[\d{2}:\d{2}:\d{2}\s+WARN(?:ING)?\]:?)/i);
+  const infoMatch = text.match(/^(\[\d{2}:\d{2}:\d{2}\]\s*\[[^\]]+INFO\]:?|\[\d{2}:\d{2}:\d{2}\s+INFO\]:?)/i);
+
+  if (errMatch) {
+    const len = errMatch[0].length;
+    return (
+      <span className="text-red-400">
+        <span className="text-red-500 font-semibold">{text.substring(0, len)}</span>
+        {text.substring(len)}
+      </span>
+    );
+  }
+
+  if (warnMatch) {
+    const len = warnMatch[0].length;
+    return (
+      <span className="text-amber-400">
+        <span className="text-amber-500 font-semibold">{text.substring(0, len)}</span>
+        {text.substring(len)}
+      </span>
+    );
+  }
+
+  if (infoMatch) {
+    const len = infoMatch[0].length;
+    return (
+      <span>
+        <span className="text-cyan-400">{text.substring(0, len)}</span>
+        <span className="text-gray-300">{text.substring(len)}</span>
+      </span>
+    );
+  }
+
+  if (lower.includes('warn') || lower.includes('warning')) {
+    return <span className="text-amber-400">{text}</span>;
+  }
+  if (lower.includes('error') || lower.includes('fatal') || lower.includes('severe') || lower.includes('exception')) {
+    return <span className="text-red-400">{text}</span>;
+  }
+
+  return <span className={colorClass}>{text}</span>;
+}
 
 export default function Console() {
   const { servers, selectedServerId, settings, consoleLogs, appendConsoleLog, clearConsoleLogs } = useStore();
@@ -11,11 +71,17 @@ export default function Console() {
   const logs = selectedServerId ? consoleLogs[selectedServerId] || [] : [];
   const [command, setCommand] = useState('');
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const [confirmAction, setConfirmAction] = useState<'stop' | 'restart' | null>(null);
   const commandDraft = useRef('');
   const [autoScroll, setAutoScroll] = useState(settings?.auto_scroll_console ?? true);
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [matchIndex, setMatchIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const logRefs = useRef(new Map<number, HTMLDivElement>());
   
   const consoleEndRef = useRef<HTMLDivElement>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
 
 
 
@@ -25,49 +91,38 @@ export default function Console() {
     }
   }, [logs, autoScroll]);
 
-  const [pendingRestart, setPendingRestart] = useState<number | null>(null);
+  useEffect(() => {
+    const openSearch = () => {
+      setSearchOpen(true);
+    };
+    window.addEventListener('minedock-find', openSearch);
+    return () => window.removeEventListener('minedock-find', openSearch);
+  }, []);
 
   useEffect(() => {
-    if (pendingRestart && selectedServer?.status === 'offline') {
-      const serverId = pendingRestart;
-      setPendingRestart(null);
-      invoke('start_mc_server', { id: serverId }).catch(err => {
-        appendConsoleLog(serverId, `System Error: Failed to start server during restart - ${err}`, true);
-      });
-    }
-  }, [selectedServer?.status, pendingRestart]);
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
 
-  const handleStart = async () => {
-    if (!selectedServerId) return;
-    try {
-      appendConsoleLog(selectedServerId, 'System: Starting server...', false);
-      await invoke('start_mc_server', { id: selectedServerId });
-    } catch (err) {
-      appendConsoleLog(selectedServerId, `System Error: ${err}`, true);
+  const matches = search
+    ? logs.filter(log => log.text.toLowerCase().includes(search.toLowerCase()))
+    : [];
+
+  useEffect(() => {
+    setMatchIndex(0);
+  }, [search]);
+
+  useEffect(() => {
+    const match = matches[matchIndex];
+    if (match) {
+      setAutoScroll(false);
+      logRefs.current.get(match.id)?.scrollIntoView({ block: 'center' });
     }
+  }, [matchIndex, search]);
+
+  const moveMatch = (direction: number) => {
+    if (!matches.length) return;
+    setMatchIndex(index => (index + direction + matches.length) % matches.length);
   };
-
-  const handleStop = async () => {
-    if (!selectedServerId) return;
-    try {
-      appendConsoleLog(selectedServerId, 'System: Stopping server...', false);
-      await invoke('stop_mc_server', { id: selectedServerId });
-    } catch (err) {
-      appendConsoleLog(selectedServerId, `System Error: ${err}`, true);
-    }
-  };
-
-  const handleRestart = async () => {
-    if (!selectedServerId) return;
-    try {
-      appendConsoleLog(selectedServerId, 'System: Restarting server...', false);
-      setPendingRestart(selectedServerId);
-      await invoke('stop_mc_server', { id: selectedServerId });
-    } catch (err) {
-      setPendingRestart(null);
-      appendConsoleLog(selectedServerId, `System Error: ${err}`, true);
-    }
-  }
 
   const handleHistoryKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
@@ -93,7 +148,7 @@ export default function Console() {
     if (!command.trim() || !selectedServerId) return;
 
     if (selectedServer?.status !== 'online' && selectedServer?.status !== 'starting') {
-      alert("Server is not running.");
+      notify('Server is not running.', 'warning');
       return;
     }
 
@@ -105,7 +160,7 @@ export default function Console() {
       commandDraft.current = '';
     } catch (err) {
       console.error(err);
-      alert('Failed to send command: ' + err);
+      notify('Failed to send command: ' + err, 'error');
     }
   };
 
@@ -138,23 +193,6 @@ export default function Console() {
         </div>
         
         <div className="flex gap-2">
-          {(!isRunning && selectedServer.status !== 'stopping') ? (
-            <button onClick={handleStart} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
-              <Play size={14} /> Start
-            </button>
-          ) : (
-            <>
-              <button onClick={() => settings?.confirm_stop ? setConfirmAction('restart') : handleRestart()} disabled={selectedServer.status === 'stopping'} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                <RotateCw size={14} /> Restart
-              </button>
-              <button onClick={() => settings?.confirm_stop ? setConfirmAction('stop') : handleStop()} disabled={selectedServer.status === 'stopping'} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                <Square size={14} /> Stop
-              </button>
-            </>
-          )}
-          
-          <div className="w-px h-6 bg-[#2a2b2f] mx-2 self-center"></div>
-          
           <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
             <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} className="rounded border-gray-600 bg-transparent text-blue-500 focus:ring-0" />
             Auto-scroll
@@ -165,25 +203,80 @@ export default function Console() {
         </div>
       </div>
 
-      {/* Terminal View */}
-      <div className="flex-1 bg-[#09090a] border border-[#2a2b2f] overflow-y-auto p-4 font-mono text-sm leading-relaxed">
-        {logs.length === 0 && (
-          <div className="text-gray-600 text-center mt-10">Server output will appear here.</div>
+      <div className="relative flex flex-1 min-h-0">
+        {/* Terminal View */}
+        <div
+          ref={consoleRef}
+          onScroll={event => {
+            const element = event.currentTarget;
+            setShowScrollDown(element.scrollHeight - element.scrollTop - element.clientHeight > 48);
+          }}
+          className="flex-1 bg-[#09090a] border border-[#2a2b2f] overflow-y-auto p-4 font-mono text-sm leading-relaxed"
+        >
+          {searchOpen && (
+            <div className="sticky top-0 z-10 ml-auto mb-3 flex w-fit items-center gap-1 rounded-md border border-[#3a3b3f] bg-[#1c1d21] p-1 shadow-lg">
+              <Search size={15} className="ml-2 text-gray-500" />
+              <input
+                ref={searchInputRef}
+                autoFocus
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Escape') {
+                    setSearchOpen(false);
+                    setSearch('');
+                  } else if (event.key === 'Enter') {
+                    moveMatch(event.shiftKey ? -1 : 1);
+                  }
+                }}
+                placeholder="Find in console"
+                className="w-52 bg-transparent px-2 py-1 text-sm text-white outline-none"
+              />
+              <span className="min-w-14 text-center text-xs text-gray-500">
+                {search ? `${matches.length ? matchIndex + 1 : 0}/${matches.length}` : '0/0'}
+              </span>
+              <button onClick={() => moveMatch(-1)} disabled={!matches.length} className="p-1 text-gray-400 hover:text-white disabled:opacity-30" title="Previous match"><ChevronUp size={16} /></button>
+              <button onClick={() => moveMatch(1)} disabled={!matches.length} className="p-1 text-gray-400 hover:text-white disabled:opacity-30" title="Next match"><ChevronDown size={16} /></button>
+              <button onClick={() => { setSearchOpen(false); setSearch(''); }} className="p-1 text-gray-400 hover:text-white" title="Close search"><X size={16} /></button>
+            </div>
+          )}
+          {logs.length === 0 && (
+            <div className="text-gray-600 text-center mt-10">Server output will appear here.</div>
+          )}
+          {logs.map(log => {
+            const hasTimestamp = /^\[\d{2}:\d{2}:\d{2}/.test(log.text);
+            return (
+              <div
+                key={log.id}
+                ref={element => {
+                  if (element) logRefs.current.set(log.id, element);
+                  else logRefs.current.delete(log.id);
+                }}
+                className={`break-words rounded-sm px-1 -mx-1 ${matches[matchIndex]?.id === log.id ? 'bg-amber-400/15 ring-1 ring-amber-400/40' : ''}`}
+              >
+                {!hasTimestamp && (
+                  <span className="text-gray-600 mr-2 select-none">[{log.timestamp}]</span>
+                )}
+                {parseLogLine(log.text, log.isError)}
+              </div>
+            );
+          })}
+          <div ref={consoleEndRef} />
+        </div>
+        {showScrollDown && (
+          <button
+            onClick={() => {
+              consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+              setAutoScroll(true);
+            }}
+            title="Jump to latest output"
+            aria-label="Jump to latest output"
+            className="absolute bottom-3 right-4 rounded-full border border-[#34353a] bg-[#1c1d21]/90 p-2 text-gray-500 shadow-sm backdrop-blur-sm transition-colors hover:text-gray-200"
+          >
+            <ArrowDown size={15} />
+          </button>
         )}
-        {logs.map(log => (
-          <div key={log.id} className={`break-words ${log.text.startsWith('>') ? 'text-blue-400' : log.isError ? 'text-red-400' : 'text-gray-300'}`}>
-            <span className="text-gray-600 mr-2 select-none">[{log.timestamp}]</span>
-            {/* Simple highlight for common MC severities */}
-            {log.text.includes('WARN') && !log.isError ? (
-               <span className="text-amber-400">{log.text}</span>
-            ) : log.text.includes('INFO') && !log.isError ? (
-               <span><span className="text-cyan-400">{log.text.substring(0, 31)}</span><span className="text-gray-300">{log.text.substring(31)}</span></span>
-            ) : (
-               log.text
-            )}
-          </div>
-        ))}
-        <div ref={consoleEndRef} />
+
       </div>
 
       {/* Input Field */}
@@ -203,19 +296,6 @@ export default function Console() {
           </button>
         </form>
       </div>
-      {confirmAction && (
-        <ConfirmDialog
-          title={confirmAction === 'restart' ? 'Restart server?' : 'Stop server?'}
-          message={`${selectedServer.name} will disconnect all connected players.`}
-          confirmLabel={confirmAction === 'restart' ? 'Restart' : 'Stop'}
-          onCancel={() => setConfirmAction(null)}
-          onConfirm={() => {
-            const action = confirmAction;
-            setConfirmAction(null);
-            action === 'restart' ? handleRestart() : handleStop();
-          }}
-        />
-      )}
     </div>
   );
 }

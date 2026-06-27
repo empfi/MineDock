@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool { true }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Server {
     pub id: Option<i64>,
@@ -15,6 +17,12 @@ pub struct Server {
     pub created_at: String,
     pub last_started_at: Option<String>,
     pub port: i32,
+    #[serde(default = "default_true")]
+    pub share_enabled: bool,
+    #[serde(skip_deserializing)]
+    pub install_path_exists: Option<bool>,
+    #[serde(skip_deserializing)]
+    pub backups_path_exists: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -28,6 +36,10 @@ pub struct AppSettings {
     pub confirm_stop: bool,
     pub auto_scroll_console: bool,
     pub check_updates_startup: bool,
+    pub auto_restart: bool,
+    pub tunnel_enabled: bool,
+    pub tunnel_relay: String,
+    pub tunnel_token: String,
 }
 
 impl Default for AppSettings {
@@ -42,6 +54,10 @@ impl Default for AppSettings {
             confirm_stop: true,
             auto_scroll_console: true,
             check_updates_startup: true,
+            auto_restart: false,
+            tunnel_enabled: false,
+            tunnel_relay: String::new(),
+            tunnel_token: String::new(),
         }
     }
 }

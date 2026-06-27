@@ -22,3 +22,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+tunnel-relay/build/
+tunnel-relay/*.jar

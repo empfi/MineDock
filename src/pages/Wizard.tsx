@@ -14,8 +14,12 @@ const SOFTWARE = [
 ] as const;
 export default function Wizard() {
   const navigate = useNavigate();
-  const { servers, settings, fetchServers } = useStore();
+  const { servers, settings, fetchServers, getSoftwareVersionsCached, clearVersionsCache, fetchSettings } = useStore();
   const [step, setStep] = useState(1);
+
+  useEffect(() => {
+    clearVersionsCache();
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +42,7 @@ export default function Wizard() {
   // Install State
   const [installStatus, setInstallStatus] = useState('');
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const hasValidInstallPath = /^[A-Za-z]:[\\/](?![\\/])[^<>:"|?*\r\n]+$/.test(installPath.trim());
 
   useEffect(() => {
     if (settings) {
@@ -52,10 +57,12 @@ export default function Wizard() {
     if (step === 3) {
       setLoading(true);
       setError(null);
-      invoke<string[]>('get_software_versions', { serverType })
+      getSoftwareVersionsCached(serverType)
         .then(data => {
           setVersions(data);
-          setVersion(data[0] || '');
+          if (!data.includes(version)) {
+            setVersion(data[0] || '');
+          }
           if (data.length === 0) setError(`No ${serverType} versions are currently available.`);
         })
         .catch(e => setError(String(e)))
@@ -106,7 +113,7 @@ export default function Wizard() {
       
       // 2. Download jar
       setInstallStatus('Downloading server jar...');
-      const jarName = `${serverType}-${version}.jar`;
+      const jarName = 'server.jar';
       const jarPath = `${installPath}\\${jarName}`;
       
       const unlisten = await listen<{downloaded: number, total: number}>('download-progress', (event) => {
@@ -142,6 +149,20 @@ export default function Wizard() {
       };
 
       await invoke('create_new_server', { server: newServer });
+
+      if (settings) {
+        const updatedSettings = {
+          ...settings,
+          default_java_path: javaPath,
+        };
+        try {
+          await invoke('save_settings', { settings: updatedSettings });
+          await fetchSettings();
+        } catch (settingsErr) {
+          console.warn("Failed to save java path to settings:", settingsErr);
+        }
+      }
+
       await fetchServers();
       
       setInstallStatus('Complete!');
@@ -205,7 +226,7 @@ export default function Wizard() {
                 <Folder size={18} /> Browse
               </button>
             </div>
-            {!installPath && <p className="text-red-400 text-xs">Path is required.</p>}
+            {!hasValidInstallPath && <p className="text-red-400 text-xs">Enter a valid absolute Windows path.</p>}
           </div>
         )}
 
@@ -253,28 +274,69 @@ export default function Wizard() {
         )}
 
      {step === 4 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
-            <h2 className="text-xl font-semibold text-white">4. RAM Allocation</h2>
-            <p className="text-gray-400 text-sm">Allocate memory for your server. (System has {sysMemory} MB total)</p>
+          <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+            <div>
+              <h2 className="text-xl font-semibold text-white">4. RAM Allocation</h2>
+              <p className="text-gray-400 text-sm mt-1">Allocate memory for your server. (System has {sysMemory} MB total)</p>
+            </div>
             
-            <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-6">
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Minimum RAM (Xms) in MB</label>
-                <input
-                  type="number"
-                  value={ramMin}
-                  onChange={(e) => setRamMin(parseInt(e.target.value) || 1024)}
-                  className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-                />
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-sm text-gray-400">Minimum RAM (Xms)</label>
+                  <span className="text-sm font-semibold text-white">{ramMin} MB</span>
+                </div>
+                <div className="flex gap-4 items-center">
+                  <input
+                    type="range"
+                    min={512}
+                    max={ramMax}
+                    step={256}
+                    value={ramMin}
+                    onChange={(e) => setRamMin(Math.min(parseInt(e.target.value) || 1024, ramMax))}
+                    className="flex-1 accent-blue-500 h-2 bg-[#2a2b2f] rounded-lg appearance-none cursor-pointer"
+                  />
+                  <input
+                    type="number"
+                    value={ramMin}
+                    onChange={(e) => setRamMin(Math.min(parseInt(e.target.value) || 0, sysMemory))}
+                    className="w-28 bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-1.5 text-white text-center focus:outline-none focus:border-blue-500"
+                    placeholder="MB"
+                  />
+                </div>
               </div>
+
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Maximum RAM (Xmx) in MB</label>
-                <input
-                  type="number"
-                  value={ramMax}
-                  onChange={(e) => setRamMax(parseInt(e.target.value) || 4096)}
-                  className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-                />
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-sm text-gray-400">Maximum RAM (Xmx)</label>
+                  <span className="text-sm font-semibold text-white">{ramMax} MB</span>
+                </div>
+                <div className="flex gap-4 items-center">
+                  <input
+                    type="range"
+                    min={1024}
+                    max={sysMemory}
+                    step={256}
+                    value={ramMax}
+                    onChange={(e) => {
+                      const newMax = parseInt(e.target.value) || 1024;
+                      setRamMax(newMax);
+                      if (ramMin > newMax) setRamMin(newMax);
+                    }}
+                    className="flex-1 accent-blue-500 h-2 bg-[#2a2b2f] rounded-lg appearance-none cursor-pointer"
+                  />
+                  <input
+                    type="number"
+                    value={ramMax}
+                    onChange={(e) => {
+                      const newMax = Math.min(parseInt(e.target.value) || 0, sysMemory);
+                      setRamMax(newMax);
+                      if (ramMin > newMax) setRamMin(newMax);
+                    }}
+                    className="w-28 bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-1.5 text-white text-center focus:outline-none focus:border-blue-500"
+                    placeholder="MB"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -394,8 +456,8 @@ export default function Wizard() {
           <button
             onClick={() => {
               setError(null);
-              if (step === 2 && !installPath) {
-                setError('Installation path is required');
+              if (step === 2 && !hasValidInstallPath) {
+                setError('Enter a valid absolute Windows installation path');
                 return;
               }
               if (step === 3 && !version) {
@@ -411,8 +473,8 @@ export default function Wizard() {
               }
               setStep(step + 1);
             }}
-            disabled={step === 3 && (loading || !version)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
+            disabled={(step === 2 && !hasValidInstallPath) || (step === 3 && (loading || !version))}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Next <ChevronRight size={18} />
           </button>

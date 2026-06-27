@@ -7,11 +7,14 @@ interface ConfirmDialogProps {
   confirmLabel: string;
   danger?: boolean;
   busy?: boolean;
+  checkboxLabel?: string;
+  checkboxValue?: boolean;
+  onCheckboxChange?: (checked: boolean) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export default function ConfirmDialog({ title, message, confirmLabel, danger = true, busy = false, onConfirm, onCancel }: ConfirmDialogProps) {
+export default function ConfirmDialog({ title, message, confirmLabel, danger = true, busy = false, checkboxLabel, checkboxValue, onCheckboxChange, onConfirm, onCancel }: ConfirmDialogProps) {
   useEffect(() => {
     const close = (event: KeyboardEvent) => event.key === 'Escape' && !busy && onCancel();
     window.addEventListener('keydown', close);
@@ -26,6 +29,17 @@ export default function ConfirmDialog({ title, message, confirmLabel, danger = t
           <div>
             <h2 id="confirm-title" className="font-semibold text-white">{title}</h2>
             <p className="mt-2 text-sm leading-relaxed text-gray-400">{message}</p>
+            {checkboxLabel && (
+              <label className="mt-4 flex items-center gap-2 cursor-pointer text-sm text-gray-300 hover:text-white">
+                <input 
+                  type="checkbox" 
+                  checked={checkboxValue} 
+                  onChange={(e) => onCheckboxChange && onCheckboxChange(e.target.checked)} 
+                  className="rounded border-gray-600 bg-transparent text-blue-500 focus:ring-0" 
+                />
+                {checkboxLabel}
+              </label>
+            )}
           </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-[#2a2b2f] bg-[#141517] p-4">

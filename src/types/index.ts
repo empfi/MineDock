@@ -12,6 +12,9 @@ export interface Server {
   created_at: string;
   last_started_at?: string;
   port: number;
+  share_enabled?: boolean;
+  install_path_exists?: boolean;
+  backups_path_exists?: boolean;
 }
 
 export interface AppSettings {
@@ -24,6 +27,10 @@ export interface AppSettings {
   confirm_stop: boolean;
   auto_scroll_console: boolean;
   check_updates_startup: boolean;
+  auto_restart: boolean;
+  tunnel_enabled: boolean;
+  tunnel_relay: string;
+  tunnel_token: string;
 }
 
 export interface ConsoleLogEntry {

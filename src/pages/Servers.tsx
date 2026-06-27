@@ -2,14 +2,88 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { useNavigate } from 'react-router-dom';
 import { invoke } from '@tauri-apps/api/core';
-import { Play, Square, Trash2, FolderOpen, Settings as SettingsIcon } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
+import { Play, Square, Trash2, FolderOpen, Settings as SettingsIcon, Upload, Loader2, Search } from 'lucide-react';
 import { Server } from '../types';
 import ConfirmDialog from '../components/ConfirmDialog';
+import { notify } from '../components/Notifications';
 
 export default function Servers() {
   const { servers, fetchServers, setSelectedServer, settings } = useStore();
   const [pending, setPending] = useState<{ action: 'stop' | 'delete'; server: Server } | null>(null);
+  const [deleteFiles, setDeleteFiles] = useState(false);
   const navigate = useNavigate();
+
+  // Import Server state
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [importDir, setImportDir] = useState('');
+  const [importJars, setImportJars] = useState<string[]>([]);
+  const [importForm, setImportForm] = useState({
+    name: '',
+    serverType: 'vanilla',
+    version: '',
+    port: 25565,
+    ramMin: 1024,
+    ramMax: 4096,
+    javaPath: 'java',
+    selectedJar: 'server.jar',
+  });
+
+  const browseImportDir = async () => {
+    const selected = await open({ directory: true, multiple: false });
+    if (!selected || typeof selected !== 'string') return;
+    setImportDir(selected);
+    setScanning(true);
+    try {
+      const result = await invoke<{ jar_files: string[]; detected_port: number | null; server_properties_exists: boolean }>(
+        'scan_directory_for_import',
+        { directoryPath: selected }
+      );
+      setImportJars(result.jar_files);
+      setImportForm(f => {
+        const parts = selected.split(/[\\/]/);
+        return {
+          ...f,
+          name: parts[parts.length - 1] || '',
+          port: result.detected_port ?? 25565,
+          selectedJar: result.jar_files.find(j => j === 'server.jar') ?? result.jar_files[0] ?? 'server.jar',
+        };
+      });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importDir || !importForm.name) return;
+    setImporting(true);
+    try {
+      await invoke('create_new_server', {
+        name: importForm.name,
+        serverType: importForm.serverType,
+        minecraftVersion: importForm.version || 'unknown',
+        installPath: importDir,
+        jarPath: importForm.selectedJar,
+        port: importForm.port,
+        ramMin: importForm.ramMin,
+        ramMax: importForm.ramMax,
+        javaPath: importForm.javaPath,
+        backupsPath: `${importDir}\\backups`,
+      });
+      await fetchServers();
+      setShowImport(false);
+      setImportDir('');
+      setImportJars([]);
+    } catch (err: any) {
+      notify('Import failed: ' + err, 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const handleStart = async (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
@@ -31,18 +105,25 @@ export default function Servers() {
     else stopServer(server.id!);
   };
 
-  const deleteServer = async (id: number) => {
+  const deleteServer = async (server: Server) => {
     try {
-      await invoke('remove_server', { id });
+      if (deleteFiles) {
+        await invoke('delete_server_files', { serverPath: server.install_path });
+      }
+      await invoke('remove_server', { id: server.id });
       setPending(null);
+      setDeleteFiles(false);
       fetchServers();
     } catch (err) { console.error(err); }
   };
 
   const handleDelete = (e: React.MouseEvent, server: Server) => {
     e.stopPropagation();
-    if (settings?.confirm_delete) setPending({ action: 'delete', server });
-    else deleteServer(server.id!);
+    if (settings?.confirm_delete) {
+      setPending({ action: 'delete', server });
+      setDeleteFiles(false);
+    }
+    else deleteServer(server);
   };
 
   const openFolder = async (e: React.MouseEvent, path: string) => {
@@ -63,12 +144,20 @@ export default function Servers() {
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Servers</h1>
           <p className="text-gray-400">Manage your local Minecraft servers.</p>
         </div>
-        <button
-          onClick={() => navigate('/wizard')}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors"
-        >
-          Create Server
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowImport(true)}
+            className="flex items-center gap-2 bg-[#1c1d21] hover:bg-[#2a2b2f] border border-[#2a2b2f] text-gray-300 px-4 py-2 rounded-md font-medium transition-colors"
+          >
+            <Upload size={16} /> Import Server
+          </button>
+          <button
+            onClick={() => navigate('/wizard')}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors"
+          >
+            Create Server
+          </button>
+        </div>
       </div>
 
       <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg overflow-hidden">
@@ -99,20 +188,27 @@ export default function Servers() {
                   <div className="text-xs text-gray-500 font-normal mt-1">{server.server_type}</div>
                 </td>
                 <td className="px-6 py-4">
-                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full ${
-                    server.status === 'online' ? 'bg-emerald-500/10 text-emerald-400' :
-                    server.status === 'starting' ? 'bg-amber-500/10 text-amber-400' :
-                    server.status === 'stopping' ? 'bg-red-500/10 text-red-400' :
-                    'bg-gray-500/10 text-gray-400'
-                  }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${
-                      server.status === 'online' ? 'bg-emerald-400' :
-                      server.status === 'starting' ? 'bg-amber-400 animate-pulse' :
-                      server.status === 'stopping' ? 'bg-red-400 animate-pulse' :
-                      'bg-gray-400'
-                    }`}></span>
-                    {server.status.charAt(0).toUpperCase() + server.status.slice(1)}
-                  </span>
+                  <div className="flex flex-col gap-1 items-start">
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full ${
+                      server.status === 'online' ? 'bg-emerald-500/10 text-emerald-400' :
+                      server.status === 'starting' ? 'bg-amber-500/10 text-amber-400' :
+                      server.status === 'stopping' ? 'bg-red-500/10 text-red-400' :
+                      'bg-gray-500/10 text-gray-400'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        server.status === 'online' ? 'bg-emerald-400' :
+                        server.status === 'starting' ? 'bg-amber-400 animate-pulse' :
+                        server.status === 'stopping' ? 'bg-red-400 animate-pulse' :
+                        'bg-gray-400'
+                      }`}></span>
+                      {server.status.charAt(0).toUpperCase() + server.status.slice(1)}
+                    </span>
+                    {server.install_path_exists === false && (
+                      <span className="inline-flex items-center text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded mt-1.5 uppercase tracking-wider">
+                        Folder Missing
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-6 py-4 text-gray-300">
                   {server.minecraft_version}
@@ -125,8 +221,9 @@ export default function Servers() {
                     {server.status === 'offline' || server.status === 'crashed' ? (
                       <button 
                         onClick={(e) => handleStart(e, server.id!)}
-                        className="p-1.5 text-gray-400 hover:text-emerald-400 hover:bg-[#2a2b2f] rounded"
-                        title="Start Server"
+                        disabled={server.install_path_exists === false}
+                        className="p-1.5 text-gray-400 hover:text-emerald-400 hover:bg-[#2a2b2f] rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={server.install_path_exists === false ? "Folder Missing" : "Start Server"}
                       >
                         <Play size={18} />
                       </button>
@@ -183,11 +280,141 @@ export default function Servers() {
       </div>
       {pending && <ConfirmDialog
         title={pending.action === 'stop' ? 'Stop server?' : 'Delete server profile?'}
-        message={pending.action === 'stop' ? `${pending.server.name} will disconnect all connected players.` : `${pending.server.name} will be removed from MineDock. Server files remain on disk.`}
+        message={pending.action === 'stop' ? `${pending.server.name} will disconnect all connected players.` : `${pending.server.name} will be removed from MineDock.`}
         confirmLabel={pending.action === 'stop' ? 'Stop' : 'Delete'}
-        onCancel={() => setPending(null)}
-        onConfirm={() => pending.action === 'stop' ? (setPending(null), stopServer(pending.server.id!)) : deleteServer(pending.server.id!)}
+        checkboxLabel={pending.action === 'delete' ? 'Delete all server files from disk' : undefined}
+        checkboxValue={deleteFiles}
+        onCheckboxChange={setDeleteFiles}
+        onCancel={() => { setPending(null); setDeleteFiles(false); }}
+        onConfirm={() => pending.action === 'stop' ? (setPending(null), stopServer(pending.server.id!)) : deleteServer(pending.server)}
       />}
+
+      {/* Import Server Modal */}
+      {showImport && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-xl shadow-2xl w-full max-w-lg mx-4">
+            <div className="p-6 border-b border-[#2a2b2f]">
+              <h2 className="text-xl font-bold text-white">Import Existing Server</h2>
+              <p className="text-gray-400 text-sm mt-1">Register an existing Minecraft server folder into MineDock.</p>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Directory Picker */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Server Folder</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={importDir}
+                    placeholder="Click Browse to select a folder..."
+                    className="flex-1 bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-gray-300 text-sm"
+                  />
+                  <button
+                    onClick={browseImportDir}
+                    disabled={scanning}
+                    className="flex items-center gap-2 px-3 py-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white rounded-md text-sm transition-colors disabled:opacity-60"
+                  >
+                    {scanning ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                    Browse
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Server Name</label>
+                  <input
+                    type="text"
+                    value={importForm.name}
+                    onChange={e => setImportForm(f => ({...f, name: e.target.value}))}
+                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Server Port</label>
+                  <input
+                    type="number"
+                    value={importForm.port}
+                    onChange={e => setImportForm(f => ({...f, port: parseInt(e.target.value) || 25565}))}
+                    className={`w-full bg-[#0f0f11] border rounded-md px-3 py-2 text-white text-sm focus:outline-none ${servers.some(server => server.port === importForm.port) ? 'border-red-500' : 'border-[#2a2b2f] focus:border-blue-500'}`}
+                  />
+                  {servers.some(server => server.port === importForm.port) && (
+                    <p className="mt-1 text-xs text-red-400">Port {importForm.port} belongs to another server. Every local and tunneled server needs a unique port.</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Server Type</label>
+                  <select
+                    value={importForm.serverType}
+                    onChange={e => setImportForm(f => ({...f, serverType: e.target.value}))}
+                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 appearance-none"
+                  >
+                    <option value="vanilla">Vanilla</option>
+                    <option value="paper">Paper</option>
+                    <option value="purpur">Purpur</option>
+                    <option value="velocity">Velocity</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">MC Version</label>
+                  <input
+                    type="text"
+                    value={importForm.version}
+                    onChange={e => setImportForm(f => ({...f, version: e.target.value}))}
+                    placeholder="e.g. 1.21.4"
+                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Executable Jar</label>
+                  {importJars.length > 0 ? (
+                    <select
+                      value={importForm.selectedJar}
+                      onChange={e => setImportForm(f => ({...f, selectedJar: e.target.value}))}
+                      className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 appearance-none"
+                    >
+                      {importJars.map(j => <option key={j} value={j}>{j}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={importForm.selectedJar}
+                      onChange={e => setImportForm(f => ({...f, selectedJar: e.target.value}))}
+                      placeholder="server.jar"
+                      className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 font-mono"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Java Path</label>
+                  <input
+                    type="text"
+                    value={importForm.javaPath}
+                    onChange={e => setImportForm(f => ({...f, javaPath: e.target.value}))}
+                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-[#2a2b2f] flex gap-3 justify-end">
+              <button
+                onClick={() => { setShowImport(false); setImportDir(''); setImportJars([]); }}
+                className="px-4 py-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white rounded-md text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={!importDir || !importForm.name || importing || servers.some(server => server.port === importForm.port)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-md text-sm font-medium transition-colors"
+              >
+                {importing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                Import Server
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
