@@ -135,6 +135,14 @@ pub fn update_server_status(conn: &Connection, server_id: i64, status: &str) -> 
     Ok(())
 }
 
+pub fn update_server_port(conn: &Connection, server_id: i64, port: i32) -> Result<()> {
+    conn.execute(
+        "UPDATE servers SET port = ?1 WHERE id = ?2",
+        params![port, server_id],
+    )?;
+    Ok(())
+}
+
 pub fn update_server_last_started(conn: &Connection, server_id: i64, last_started_at: &str) -> Result<()> {
     conn.execute(
         "UPDATE servers SET last_started_at = ?1 WHERE id = ?2",

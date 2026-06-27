@@ -40,9 +40,7 @@ function Sidebar() {
     <div className="w-16 sm:w-20 lg:w-64 bg-[#141517] border-r border-[#2a2b2f] h-screen flex flex-col flex-shrink-0">
       <div className="h-16 flex items-center justify-center lg:justify-start px-2 lg:px-6 border-b border-[#2a2b2f]">
         <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-          <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
-            <Server size={14} className="text-white" />
-          </div>
+          <img src="/logo.png" alt="MineDock" className="w-6 h-6 rounded" />
           <span className="hidden lg:inline">MineDock</span>
         </h1>
       </div>

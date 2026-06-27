@@ -25,38 +25,47 @@ export default function Console() {
     }
   }, [logs, autoScroll]);
 
+  const [pendingRestart, setPendingRestart] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (pendingRestart && selectedServer?.status === 'offline') {
+      const serverId = pendingRestart;
+      setPendingRestart(null);
+      invoke('start_mc_server', { id: serverId }).catch(err => {
+        appendConsoleLog(serverId, `System Error: Failed to start server during restart - ${err}`, true);
+      });
+    }
+  }, [selectedServer?.status, pendingRestart]);
+
   const handleStart = async () => {
     if (!selectedServerId) return;
     try {
+      appendConsoleLog(selectedServerId, 'System: Starting server...', false);
       await invoke('start_mc_server', { id: selectedServerId });
     } catch (err) {
-      console.error(err);
+      appendConsoleLog(selectedServerId, `System Error: ${err}`, true);
     }
   };
 
   const handleStop = async () => {
     if (!selectedServerId) return;
     try {
+      appendConsoleLog(selectedServerId, 'System: Stopping server...', false);
       await invoke('stop_mc_server', { id: selectedServerId });
     } catch (err) {
-      console.error(err);
+      appendConsoleLog(selectedServerId, `System Error: ${err}`, true);
     }
   };
 
   const handleRestart = async () => {
     if (!selectedServerId) return;
     try {
+      appendConsoleLog(selectedServerId, 'System: Restarting server...', false);
+      setPendingRestart(selectedServerId);
       await invoke('stop_mc_server', { id: selectedServerId });
-      // wait a bit and restart
-      setTimeout(async () => {
-        try {
-          await invoke('start_mc_server', { id: selectedServerId });
-        } catch(err) {
-          console.error(err);
-        }
-      }, 2000);
     } catch (err) {
-      console.error(err);
+      setPendingRestart(null);
+      appendConsoleLog(selectedServerId, `System Error: ${err}`, true);
     }
   }
 
@@ -129,16 +138,16 @@ export default function Console() {
         </div>
         
         <div className="flex gap-2">
-          {!isRunning ? (
+          {(!isRunning && selectedServer.status !== 'stopping') ? (
             <button onClick={handleStart} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
               <Play size={14} /> Start
             </button>
           ) : (
             <>
-              <button onClick={() => settings?.confirm_stop ? setConfirmAction('restart') : handleRestart()} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
+              <button onClick={() => settings?.confirm_stop ? setConfirmAction('restart') : handleRestart()} disabled={selectedServer.status === 'stopping'} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 <RotateCw size={14} /> Restart
               </button>
-              <button onClick={() => settings?.confirm_stop ? setConfirmAction('stop') : handleStop()} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm transition-colors">
+              <button onClick={() => settings?.confirm_stop ? setConfirmAction('stop') : handleStop()} disabled={selectedServer.status === 'stopping'} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 <Square size={14} /> Stop
               </button>
             </>
