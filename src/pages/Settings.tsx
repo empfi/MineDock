@@ -25,7 +25,7 @@ export default function SettingsPage() {
     try {
       await invoke('save_settings', { settings: localSettings });
       await fetchSettings();
-      notify('Settings saved.', 'success');
+      notify('Settings saved.', 'success', false);
     } catch (e) {
       notify(`Failed to save settings: ${e}`, 'error');
     } finally {
@@ -45,7 +45,7 @@ export default function SettingsPage() {
     setTestingRelay(true);
     try {
       await invoke('test_relay_connection', { relay: localSettings.tunnel_relay, token: localSettings.tunnel_token });
-      notify('Relay connection successful.', 'success');
+      notify('Relay connection successful.', 'success', false);
     } catch (error) {
       notify(`Relay test failed: ${error}`, 'error');
     } finally {

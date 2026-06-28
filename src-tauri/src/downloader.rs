@@ -29,6 +29,12 @@ pub struct VersionInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct SoftwareVersionInfo {
+    pub id: String,
+    pub release_time: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct VersionDetail {
     pub downloads: Downloads,
 }
@@ -96,6 +102,18 @@ pub async fn fetch_software_versions(server_type: &str) -> Result<Vec<String>, S
     versions.sort_by_key(|version| std::cmp::Reverse(version_numbers(version)));
     versions.dedup();
     Ok(versions)
+}
+
+pub async fn fetch_software_version_info(server_type: &str) -> Result<Vec<SoftwareVersionInfo>, String> {
+    let versions = fetch_software_versions(server_type).await?;
+    let release_times: std::collections::HashMap<String, String> = fetch_versions().await?
+        .versions.into_iter()
+        .map(|version| (version.id, version.release_time))
+        .collect();
+    Ok(versions.into_iter().map(|id| SoftwareVersionInfo {
+        release_time: release_times.get(&id).cloned(),
+        id,
+    }).collect())
 }
 
 fn papermc_download_url(builds: &serde_json::Value) -> Option<&str> {

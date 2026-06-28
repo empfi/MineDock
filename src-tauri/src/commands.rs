@@ -1,15 +1,85 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use crate::database::{DbState, get_servers, add_server, delete_server, get_settings, update_settings, get_server, update_server_port, update_server_sharing, update_server_version, update_server_profile};
 use crate::models::{Server, AppSettings};
 use crate::process::ProcessManager;
-use crate::downloader::{VersionManifest, fetch_versions, download_server_jar, fetch_software_versions, download_server_software};
+use crate::downloader::{VersionManifest, SoftwareVersionInfo, fetch_versions, download_server_jar, fetch_software_versions, fetch_software_version_info, download_server_software};
 use crate::files::{FileInfo, LogSummary, list_directory, list_log_summaries, read_log_file, read_text_file, write_text_file, delete_or_schedule, create_folder, import_paths};
 use crate::backups::{BackupInfo, create_backup, list_backups, restore_backup, delete_backup as del_backup};
 use crate::worlds::{WorldInfo, list_worlds, create_world, activate_world, rename_world, delete_world, export_world, import_world};
+use crate::plugins::{InstalledPlugin, MarketplacePlugin, MarketplaceVersion, MarketplacePluginDetails, list_plugins, stream_plugin_updates, list_marketplace_versions, set_plugin_enabled, remove_plugin, search_marketplace, resolve_download, install_plugin};
 
 #[tauri::command]
 pub fn get_worlds(server_path: String) -> Result<Vec<WorldInfo>, String> {
     list_worlds(&server_path)
+}
+
+
+#[tauri::command]
+pub async fn get_installed_plugins(server_path: String) -> Result<Vec<InstalledPlugin>, String> {
+    tokio::task::spawn_blocking(move || list_plugins(&server_path))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn check_plugin_updates(app: AppHandle, server_path: String, minecraft_version: String) -> Result<(), String> {
+    stream_plugin_updates(app, &server_path, &minecraft_version).await
+}
+
+#[tauri::command]
+pub async fn get_plugin_versions(source: String, project_id: String, minecraft_version: String) -> Result<Vec<MarketplaceVersion>, String> {
+    list_marketplace_versions(&source, &project_id, &minecraft_version).await
+}
+
+#[tauri::command]
+pub async fn search_plugins(query: String, minecraft_version: String, page: u32, project_type: Option<String>) -> Result<Vec<MarketplacePlugin>, String> {
+    search_marketplace(&query, &minecraft_version, page, project_type.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn get_marketplace_plugin_details(source: String, id: String) -> Result<MarketplacePluginDetails, String> {
+    crate::plugins::get_marketplace_plugin_details(&source, &id).await
+}
+
+#[tauri::command]
+pub async fn install_modpack(
+    app: AppHandle,
+    server_path: String,
+    server_id: i64,
+    project_id: String,
+    version_id: String,
+) -> Result<(), String> {
+    crate::plugins::install_modpack(app, &server_path, server_id, &project_id, &version_id).await
+}
+
+#[tauri::command]
+pub async fn install_marketplace_plugin(
+    app: AppHandle,
+    server_path: String,
+    source: String,
+    project_id: String,
+    plugin_name: String,
+    minecraft_version: String,
+    project_type: String,
+    replace_file: Option<String>,
+    version: Option<String>,
+) -> Result<(), String> {
+    let download = resolve_download(&source, &project_id, &minecraft_version, version.as_deref(), &project_type).await?;
+    let id = format!("{source}:{project_id}");
+    let result = install_plugin(&app, &id, &plugin_name, &server_path, download, replace_file, &project_type).await;
+    let _ = app.emit("plugin-download-progress", serde_json::json!({
+        "id": id, "name": plugin_name, "state": if result.is_ok() { "done" } else { "failed" }
+    }));
+    result
+}
+
+#[tauri::command]
+pub fn toggle_plugin(server_path: String, file_name: String, enabled: bool) -> Result<(), String> {
+    set_plugin_enabled(&server_path, &file_name, enabled)
+}
+
+#[tauri::command]
+pub fn delete_plugin(server_path: String, file_name: String) -> Result<(), String> {
+    remove_plugin(&server_path, &file_name)
 }
 
 #[tauri::command]
@@ -266,6 +336,11 @@ pub async fn get_software_versions(server_type: String) -> Result<Vec<String>, S
 }
 
 #[tauri::command]
+pub async fn get_software_version_info(server_type: String) -> Result<Vec<SoftwareVersionInfo>, String> {
+    fetch_software_version_info(&server_type).await
+}
+
+#[tauri::command]
 pub async fn download_software(app: AppHandle, server_type: String, version: String, path: String) -> Result<(), String> {
     download_server_software(app, server_type, version, path).await
 }
@@ -454,6 +529,54 @@ pub struct ImportScanResult {
     pub jar_files: Vec<String>,
     pub detected_port: Option<i32>,
     pub server_properties_exists: bool,
+    pub detected_server_type: Option<String>,
+    pub detected_version: Option<String>,
+    pub detected_jar: Option<String>,
+}
+
+fn detect_version_from_text(text: &str) -> Option<String> {
+    for marker in ["for Minecraft ", "Starting minecraft server version "] {
+        if let Some(value) = text.lines().rev().find_map(|line| {
+            line.split_once(marker).map(|(_, rest)| rest.split_whitespace().next().unwrap_or("").trim_matches(|c: char| c == ')' || c == ',').to_string())
+        }).filter(|value| !value.is_empty()) {
+            return Some(normalize_minecraft_version(&value));
+        }
+    }
+    None
+}
+
+fn normalize_minecraft_version(value: &str) -> String {
+    if let Some((_, minecraft)) = value.split_once("(MC: ") {
+        return minecraft.split(')').next().unwrap_or(minecraft).trim().to_string();
+    }
+    value.trim().to_string()
+}
+
+fn inspect_server_jar(path: &std::path::Path) -> (Option<String>, Option<String>) {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else { return (None, None) };
+    let Ok(mut jar) = zip::ZipArchive::new(file) else { return (None, None) };
+    let mut version = None;
+    if let Ok(mut entry) = jar.by_name("version.json") {
+        let mut content = String::new();
+        if entry.read_to_string(&mut content).is_ok() {
+            version = serde_json::from_str::<serde_json::Value>(&content).ok()
+                .and_then(|json| json["id"].as_str().map(normalize_minecraft_version));
+        }
+    }
+    let mut server_type = None;
+    if let Ok(mut entry) = jar.by_name("META-INF/MANIFEST.MF") {
+        let mut manifest = String::new();
+        let _ = entry.read_to_string(&mut manifest);
+        let lower = manifest.to_ascii_lowercase();
+        server_type = if lower.contains("purpur") { Some("purpur".into()) }
+            else if lower.contains("paper") { Some("paper".into()) }
+            else if lower.contains("velocity") { Some("velocity".into()) }
+            else if lower.contains("net.minecraft.server.main") { Some("vanilla".into()) }
+            else { None };
+        if version.is_none() { version = detect_version_from_text(&manifest); }
+    }
+    (server_type, version)
 }
 
 #[tauri::command]
@@ -466,6 +589,13 @@ pub fn scan_directory_for_import(directory_path: String) -> Result<ImportScanRes
     let mut jar_files = Vec::new();
     let mut detected_port = None;
     let mut server_properties_exists = false;
+    let mut detected_server_type = if path.join("velocity.toml").exists() { Some("velocity".to_string()) }
+        else if path.join("purpur.yml").exists() { Some("purpur".to_string()) }
+        else if path.join("paper.yml").exists() || path.join("config").join("paper-global.yml").exists() { Some("paper".to_string()) }
+        else { None };
+    let mut detected_version = std::fs::read_to_string(path.join("version_history.json")).ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|json| json["currentVersion"].as_str().map(normalize_minecraft_version));
 
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
@@ -497,10 +627,39 @@ pub fn scan_directory_for_import(directory_path: String) -> Result<ImportScanRes
     }
 
     jar_files.sort();
+    let detected_jar = jar_files.iter().find(|name| name.as_str() == "server.jar")
+        .or_else(|| jar_files.iter().find(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower.contains("paper") || lower.contains("purpur") || lower.contains("velocity")
+        }))
+        .or_else(|| jar_files.first()).cloned();
+    if let Some(jar_name) = &detected_jar {
+        let (jar_type, jar_version) = inspect_server_jar(&path.join(jar_name));
+        if detected_server_type.is_none() { detected_server_type = jar_type; }
+        if detected_version.is_none() { detected_version = jar_version; }
+    }
+    if detected_version.is_none() {
+        detected_version = std::fs::read_to_string(path.join("logs").join("latest.log")).ok()
+            .and_then(|content| detect_version_from_text(&content));
+    }
 
     Ok(ImportScanResult {
         jar_files,
         detected_port,
         server_properties_exists,
+        detected_server_type,
+        detected_version,
+        detected_jar,
     })
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::normalize_minecraft_version;
+
+    #[test]
+    fn extracts_minecraft_version_from_paper_build() {
+        assert_eq!(normalize_minecraft_version("1.21.4-232-12d8fe0 (MC: 1.21.4)"), "1.21.4");
+        assert_eq!(normalize_minecraft_version("1.20.6"), "1.20.6");
+    }
 }

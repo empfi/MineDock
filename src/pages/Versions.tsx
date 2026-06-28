@@ -64,14 +64,15 @@ export default function Versions() {
         .catch(console.error)
         .finally(() => setLoading(false));
     } else {
-      invoke<string[]>('get_software_versions', { serverType: selectedServer.server_type })
+      invoke<{ id: string; release_time?: string }[]>('get_software_version_info', { serverType: selectedServer.server_type })
         .then(data => {
           const list = data.map(v => ({
-            id: v,
-            type: selectedServer.server_type
+            id: v.id,
+            type: selectedServer.server_type,
+            releaseTime: v.release_time
           }));
           setVersionsList(list);
-          setLatestRelease(data[0] || null);
+          setLatestRelease(data[0]?.id || null);
         })
         .catch(console.error)
         .finally(() => setLoading(false));

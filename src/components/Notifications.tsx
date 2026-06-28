@@ -1,13 +1,19 @@
-import { useEffect, useState } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, AlertTriangle, Bell, CheckCircle2, Info, Trash2, X } from 'lucide-react';
 
 type NotificationType = 'success' | 'error' | 'warning' | 'info';
-type Notification = { id: number; message: string; type: NotificationType; exiting?: boolean };
+type Notification = { id: number; message: string; type: NotificationType; createdAt?: string; exiting?: boolean };
 
 let notifications: Notification[] = [];
-let nextId = 0;
+let history: Notification[] = JSON.parse(localStorage.getItem('minedock-notifications') || '[]');
+let nextId = Date.now();
 const listeners = new Set<(items: Notification[]) => void>();
+const historyListeners = new Set<(items: Notification[]) => void>();
 const publish = () => listeners.forEach(listener => listener([...notifications]));
+const publishHistory = () => {
+  localStorage.setItem('minedock-notifications', JSON.stringify(history.slice(0, 100)));
+  historyListeners.forEach(listener => listener([...history]));
+};
 const dismiss = (id: number) => {
   notifications = notifications.map(item => item.id === id ? { ...item, exiting: true } : item);
   publish();
@@ -17,11 +23,41 @@ const dismiss = (id: number) => {
   }, 180);
 };
 
-export function notify(message: string, type: NotificationType = 'info') {
+export function notify(message: string, type: NotificationType = 'info', saveToHistory = true) {
   const id = nextId++;
-  notifications = [...notifications, { id, message, type }];
+  const item = { id, message, type, createdAt: new Date().toISOString() };
+  notifications = [...notifications, item];
+  if (saveToHistory) {
+    history = [item, ...history].slice(0, 100);
+    publishHistory();
+  }
   publish();
   window.setTimeout(() => dismiss(id), 4320);
+}
+
+export function NotificationCenter() {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState(history);
+  const centerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    historyListeners.add(setItems);
+    return () => { historyListeners.delete(setItems); };
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!centerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [open]);
+  return <div ref={centerRef} className="relative">
+    <button onClick={() => setOpen(value => !value)} title="Notifications" className="relative flex h-10 w-11 items-center justify-center text-gray-400 hover:bg-[#202124] hover:text-white"><Bell size={16} />{items.length > 0 && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-500" />}</button>
+    {open && <div className="fixed right-3 top-11 z-[110] w-96 overflow-hidden rounded-lg border border-[#2a2b2f] bg-[#1c1d21] shadow-2xl">
+      <div className="flex items-center justify-between border-b border-[#2a2b2f] px-4 py-3"><span className="font-semibold text-white">Notifications</span><button onClick={() => { history = []; publishHistory(); }} className="text-gray-600 hover:text-red-400"><Trash2 size={15} /></button></div>
+      <div className="max-h-96 overflow-y-auto">{items.length ? items.map(item => <div key={item.id} className="border-b border-[#25262a] px-4 py-3"><div className="text-sm text-gray-200">{item.message}</div><div className="mt-1 text-xs text-gray-600">{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</div></div>) : <div className="py-12 text-center text-sm text-gray-600">No notifications.</div>}</div>
+    </div>}
+  </div>;
 }
 
 export default function Notifications() {

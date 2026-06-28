@@ -179,6 +179,14 @@ pub fn update_server_version(conn: &Connection, server_id: i64, version: &str, j
     Ok(())
 }
 
+pub fn update_server_type_and_version(conn: &Connection, server_id: i64, server_type: &str, version: &str, jar_path: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE servers SET server_type = ?1, minecraft_version = ?2, jar_path = ?3 WHERE id = ?4",
+        params![server_type, version, jar_path, server_id],
+    )?;
+    Ok(())
+}
+
 pub fn update_server_profile(
     conn: &Connection,
     server_id: i64,

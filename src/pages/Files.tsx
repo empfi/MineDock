@@ -182,7 +182,7 @@ export default function Files() {
         content: editingFile.content
       });
       setEditingFile({...editingFile, originalContent: editingFile.content});
-      notify('File saved.', 'success');
+      notify('File saved.', 'success', false);
     } catch (err: any) {
       notify('Failed to save file: ' + err, 'error');
     } finally {
@@ -209,9 +209,9 @@ export default function Files() {
       const result = await invoke<string>('delete_file_or_folder', { baseDir: selectedServer.install_path, subPath: pathToDelete });
       setFileToDelete(null);
       if (result === 'scheduled') {
-        notify(`${file.name} is in use. It will be deleted before next server start.`, 'warning');
+        notify(`${file.name} is in use. It will be deleted before next server start.`, 'warning', false);
       } else {
-        notify(`${file.name} deleted.`, 'success');
+        notify(`${file.name} deleted.`, 'success', false);
         loadFiles(currentPath, true);
       }
     } catch (err: any) {

@@ -201,6 +201,7 @@ export default function Wizard() {
             <h2 className="text-xl font-semibold text-white">1. Server Name</h2>
             <p className="text-gray-400 text-sm">Give your new Minecraft server a recognizable name.</p>
             <input
+              id="tour-server-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -236,7 +237,7 @@ export default function Wizard() {
               <h2 className="text-xl font-semibold text-white">3. Server Software</h2>
               <p className="text-gray-400 text-sm mt-1">Choose software, then select an available version.</p>
             </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div id="tour-software-select" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {SOFTWARE.map(software => (
                 <button
                   key={software.id}
@@ -454,6 +455,7 @@ export default function Wizard() {
         
         {step < 7 && (
           <button
+            id="tour-wizard-next"
             onClick={() => {
               setError(null);
               if (step === 2 && !hasValidInstallPath) {

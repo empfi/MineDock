@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useStore } from './store';
-import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, Minus } from 'lucide-react';
+import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, PackageSearch } from 'lucide-react';
 import { cn } from './lib/utils';
 
 // Pages
@@ -19,18 +19,20 @@ import Logs from './pages/Logs';
 import SettingsPage from './pages/Settings';
 import Wizard from './pages/Wizard';
 import Players from './pages/Players';
-import Notifications from './components/Notifications';
+import Notifications, { NotificationCenter } from './components/Notifications';
 import WindowState from './components/WindowState';
 import Worlds from './pages/Worlds';
+import Additions from './pages/Additions';
+import PluginDownloads from './components/PluginDownloads';
 import { notify } from './components/Notifications';
-
+import GuidedTour from './components/GuidedTour';
 function Sidebar() {
   const { servers, selectedServerId, setSelectedServer } = useStore();
   const selectedServer = servers.find(s => s.id === selectedServerId);
   const location = useLocation();
   const navigate = useNavigate();
   const [serverAction, setServerAction] = useState<'start' | 'stop' | 'restart' | null>(null);
-  const serverPaths = ['/console', '/players', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs'];
+  const serverPaths = ['/console', '/players', '/additions', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs'];
   const managingServer = Boolean(selectedServer && serverPaths.includes(location.pathname));
 
   const links = [
@@ -42,6 +44,7 @@ function Sidebar() {
   const serverLinks = [
     { to: "/console", icon: Terminal, label: "Console" },
     { to: "/players", icon: Users, label: "Players" },
+    { to: "/additions", icon: PackageSearch, label: "Additions" },
     { to: "/worlds", icon: Globe2, label: "Worlds" },
     { to: "/files", icon: FolderGit2, label: "Files" },
     { to: "/properties", icon: Save, label: "Properties" },
@@ -107,6 +110,7 @@ function Sidebar() {
             <NavLink
               key={link.to}
               to={link.to}
+              id={link.to === '/servers' ? 'tour-servers-tab' : undefined}
               end={link.exact}
               aria-label={link.label}
               title={link.label}
@@ -128,6 +132,7 @@ function Sidebar() {
                 <NavLink
                   key={link.to}
                   to={link.to}
+                  id={link.to === '/servers' ? 'tour-servers-tab' : undefined}
                   aria-label={link.label}
                   title={link.label}
                   className={({ isActive }) => cn(
@@ -206,7 +211,7 @@ function TitleBar() {
   return (
     <div 
       data-tauri-drag-region 
-      className="h-10 bg-[#141517] border-b border-[#2a2b2f] flex items-center justify-between pl-3 pr-0 select-none flex-shrink-0 z-50"
+      className="h-10 bg-[#141517] border-b border-[#2a2b2f] flex items-center justify-between pl-3 pr-0 select-none flex-shrink-0 z-[20000]"
     >
       <div className="flex items-center gap-2 pointer-events-none">
         <img src="/logo.png" alt="" className="w-5 h-5 rounded" />
@@ -217,6 +222,8 @@ function TitleBar() {
       <div data-tauri-drag-region className="flex-1 h-full" />
       
       <div className="flex items-center">
+        <PluginDownloads />
+        <NotificationCenter />
         <button
           onClick={onMinimize}
           className="h-10 w-11 flex items-center justify-center text-gray-400 hover:bg-[#202124] hover:text-white transition-colors"
@@ -268,8 +275,11 @@ function Layout() {
   const selectedServer = servers.find(server => server.id === selectedServerId);
   const location = useLocation();
   const navigate = useNavigate();
-  const managingServer = ['/console', '/players', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs'].includes(location.pathname);
+  const managingServer = ['/console', '/players', '/additions', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs'].includes(location.pathname);
   const [draggedTab, setDraggedTab] = useState<number | null>(null);
+  const [serverPickerOpen, setServerPickerOpen] = useState(false);
+  const [serverSearch, setServerSearch] = useState('');
+  const serverPickerRef = useRef<HTMLDivElement>(null);
   const [closingShare, setClosingShare] = useState(false);
   const [sharingBusy, setSharingBusy] = useState(false);
   const closeTab = (id: number) => {
@@ -295,12 +305,28 @@ function Layout() {
   };
 
   useEffect(() => {
+    if (!serverPickerOpen) return;
+    const closePicker = (event: PointerEvent) => {
+      if (!serverPickerRef.current?.contains(event.target as Node)) {
+        setServerPickerOpen(false);
+        setServerSearch('');
+      }
+    };
+    document.addEventListener('pointerdown', closePicker);
+    return () => document.removeEventListener('pointerdown', closePicker);
+  }, [serverPickerOpen]);
+
+  useEffect(() => {
     fetchServers();
     fetchSettings();
 
     const unlisten = listen('server-status-changed', (event: any) => {
       const [id, status] = event.payload;
       updateServerStatus(id, status);
+      const name = useStore.getState().servers.find(server => server.id === id)?.name ?? 'Host';
+      if (status === 'crashed') notify(`${name} crashed. Check the latest log for details.`, 'error');
+      if (status === 'crash-loop') notify(`${name} restart loop stopped after repeated crashes.`, 'error');
+      if (status === 'restarting') notify(`${name} crashed and is restarting.`, 'warning');
       if (status === 'offline' || status === 'crashed') {
         clearOnlinePlayers(id);
       }
@@ -349,7 +375,7 @@ function Layout() {
       try {
         const runningServer = servers.find(s => s.status === 'online' || s.status === 'starting');
         if (runningServer) {
-          const playersCur = runningServer.status === 'online' ? (onlinePlayersState[runningServer.id]?.length ?? 0) : undefined;
+          const playersCur = runningServer.status === 'online' ? (onlinePlayersState[runningServer.id!]?.length ?? 0) : undefined;
           const startTime = runningServer.status === 'online' && runningServer.last_started_at 
             ? Math.floor(new Date(runningServer.last_started_at).getTime() / 1000) 
             : undefined;
@@ -394,7 +420,7 @@ function Layout() {
         <Sidebar />
         <main className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {managingServer && (
-          <div className="server-tabs flex h-10 flex-shrink-0 overflow-x-auto border-b border-[#2a2b2f] bg-[#141517] px-1">
+          <div className="server-tabs flex h-10 flex-shrink-0 overflow-x-auto border-b border-[#2a2b2f] bg-[#141517]">
             {openServerIds.map((id, index) => {
               const server = servers.find(item => item.id === id);
               if (!server) return null;
@@ -444,13 +470,61 @@ function Layout() {
                 </div>
               );
             })}
+            <div ref={serverPickerRef} className="relative flex-shrink-0">
+              <button
+                onClick={() => setServerPickerOpen(open => !open)}
+                className="flex h-full w-10 items-center justify-center border-r border-[#2a2b2f] text-gray-500 hover:bg-[#1b1c1f] hover:text-white"
+                title="Open another server"
+                aria-label="Open another server"
+              >
+                <Plus size={16} />
+              </button>
+              {serverPickerOpen && (
+                <div className="fixed z-50 mt-1 w-56 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
+                  <div className="p-1">
+                    <input
+                      autoFocus
+                      value={serverSearch}
+                      onChange={event => setServerSearch(event.target.value)}
+                      placeholder="Search hosts..."
+                      className="w-full rounded border border-[#2a2b2f] bg-[#0f0f11] px-2.5 py-1.5 text-sm text-white outline-none placeholder:text-gray-600 focus:border-blue-500"
+                    />
+                  </div>
+                  {servers.filter(server =>
+                    server.id &&
+                    !openServerIds.includes(server.id) &&
+                    server.name.toLowerCase().includes(serverSearch.toLowerCase())
+                  ).map(server => (
+                    <button
+                      key={server.id}
+                      onClick={() => {
+                        setSelectedServer(server.id!);
+                        setServerPickerOpen(false);
+                        setServerSearch('');
+                      }}
+                      className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white"
+                    >
+                      <img src={server.server_type === 'vanilla' ? '/logo.png' : `/software/${server.server_type}.svg`} alt="" className="h-4 w-4 object-contain" />
+                      <span className="truncate">{server.name}</span>
+                    </button>
+                  ))}
+                  {!servers.some(server =>
+                    server.id &&
+                    !openServerIds.includes(server.id) &&
+                    server.name.toLowerCase().includes(serverSearch.toLowerCase())
+                  ) && (
+                    <div className="px-3 py-2 text-sm text-gray-600">{serverSearch ? 'No matching hosts' : 'All hosts are open'}</div>
+                  )}
+                </div>
+              )}
+            </div>
             {settings?.tunnel_enabled && selectedServer && (
               <div className="sticky right-0 ml-auto flex flex-shrink-0 items-center border-l border-[#2a2b2f] bg-[#141517] px-2">
                 <div className={`overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-out ${(selectedServer.share_enabled ?? true) && !closingShare ? 'mr-2 max-w-64 opacity-100' : 'mr-0 max-w-0 opacity-0'}`}>
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(`host.hyperplex.de:${selectedServer.port}`);
-                      notify('Public address copied.', 'success');
+                      notify('Public address copied.', 'success', false);
                     }}
                     className="flex whitespace-nowrap items-center gap-2 px-2 font-mono text-xs text-blue-400 hover:text-blue-300"
                     title="Copy public address"
@@ -482,6 +556,7 @@ function Layout() {
           
           <Route path="/console" element={<Console />} />
           <Route path="/players" element={<Players />} />
+          <Route path="/additions" element={<Additions />} />
           <Route path="/worlds" element={<Worlds />} />
           <Route path="/files" element={<Files />} />
           <Route path="/properties" element={<Properties />} />
@@ -493,6 +568,7 @@ function Layout() {
         </main>
       </div>
       <Notifications />
+      <GuidedTour />
     </div>
   );
 }

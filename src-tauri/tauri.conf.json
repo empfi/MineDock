@@ -12,10 +12,12 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "minedock",
-        "width": 800,
-        "height": 600,
-        "decorations": false
+        "width": 1000,
+        "height": 700,
+        "decorations": false,
+        "visible": false
       }
     ],
     "security": {

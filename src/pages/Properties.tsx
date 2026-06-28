@@ -156,7 +156,7 @@ export default function Properties() {
       }
       setSavedRawProps(contentToSave);
       
-      notify('server.properties saved. Restart server to apply changes.', 'success');
+      notify('server.properties saved. Restart server to apply changes.', 'success', false);
     } catch (err: any) {
       setError("Failed to save: " + err.toString());
     } finally {
@@ -179,7 +179,7 @@ export default function Properties() {
       });
       await useStore.getState().fetchServers();
       setSavedProfile(JSON.stringify([profileName, profileJar, profileMinRam, profileMaxRam, profileJava]));
-      notify('Server settings saved. Restart server to apply changes.', 'success');
+      notify('Server settings saved. Restart server to apply changes.', 'success', false);
     } catch (err: any) {
       setError("Failed to save settings: " + err.toString());
     } finally {

@@ -8,6 +8,7 @@ mod commands;
 mod worlds;
 pub mod tunnel;
 mod discord;
+mod plugins;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -38,6 +39,14 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::fetch_servers,
+            commands::get_installed_plugins,
+            commands::check_plugin_updates,
+            commands::get_plugin_versions,
+            commands::search_plugins,
+            commands::get_marketplace_plugin_details,
+            commands::install_marketplace_plugin,
+            commands::toggle_plugin,
+            commands::delete_plugin,
             commands::fetch_server,
             commands::create_new_server,
             commands::remove_server,
@@ -56,6 +65,7 @@ pub fn run() {
             commands::get_mc_versions,
             commands::download_mc_version,
             commands::get_software_versions,
+            commands::get_software_version_info,
             commands::download_software,
             commands::get_directory_contents,
             commands::read_file_content,
@@ -85,6 +95,7 @@ pub fn run() {
             commands::import_server_world,
             discord::update_discord_rpc,
             discord::clear_discord_rpc,
+            commands::install_modpack,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

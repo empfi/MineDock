@@ -106,3 +106,7 @@ body {
   background-color: #3b82f6;
   animation: progress-loading 2s infinite cubic-bezier(0.65, 0.815, 0.735, 0.395);
 }
+
+#tour-start-server-container {
+  opacity: 1 !important;
+}

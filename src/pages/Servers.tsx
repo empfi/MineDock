@@ -20,6 +20,7 @@ export default function Servers() {
   const [scanning, setScanning] = useState(false);
   const [importDir, setImportDir] = useState('');
   const [importJars, setImportJars] = useState<string[]>([]);
+  const [detectedImportFields, setDetectedImportFields] = useState({ serverType: false, version: false, jar: false });
   const [importForm, setImportForm] = useState({
     name: '',
     serverType: 'vanilla',
@@ -37,18 +38,34 @@ export default function Servers() {
     setImportDir(selected);
     setScanning(true);
     try {
-      const result = await invoke<{ jar_files: string[]; detected_port: number | null; server_properties_exists: boolean }>(
+      const result = await invoke<{
+        jar_files: string[];
+        detected_port: number | null;
+        server_properties_exists: boolean;
+        detected_server_type: string | null;
+        detected_version: string | null;
+        detected_jar: string | null;
+      }>(
         'scan_directory_for_import',
         { directoryPath: selected }
       );
       setImportJars(result.jar_files);
+      setDetectedImportFields({
+        serverType: Boolean(result.detected_server_type),
+        version: Boolean(result.detected_version),
+        jar: Boolean(result.detected_jar),
+      });
       setImportForm(f => {
         const parts = selected.split(/[\\/]/);
+        let detectedPort = result.detected_port ?? 25565;
+        while (servers.some(server => server.port === detectedPort)) detectedPort++;
         return {
           ...f,
           name: parts[parts.length - 1] || '',
-          port: result.detected_port ?? 25565,
-          selectedJar: result.jar_files.find(j => j === 'server.jar') ?? result.jar_files[0] ?? 'server.jar',
+          port: detectedPort,
+          serverType: result.detected_server_type ?? f.serverType,
+          version: result.detected_version ?? f.version,
+          selectedJar: result.detected_jar ?? result.jar_files[0] ?? 'server.jar',
         };
       });
     } catch (err) {
@@ -80,6 +97,7 @@ export default function Servers() {
       setShowImport(false);
       setImportDir('');
       setImportJars([]);
+      setDetectedImportFields({ serverType: false, version: false, jar: false });
     } catch (err: any) {
       notify('Import failed: ' + err, 'error');
     } finally {
@@ -154,6 +172,7 @@ export default function Servers() {
             <Upload size={16} /> Import Server
           </button>
           <button
+            id="tour-create-server"
             onClick={() => navigate('/wizard')}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors"
           >
@@ -219,7 +238,10 @@ export default function Servers() {
                   {server.port}
                 </td>
                 <td className="px-6 py-4 text-right">
-                  <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div 
+                    id={index === 0 ? "tour-start-server-container" : undefined}
+                    className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
                     {server.status === 'offline' || server.status === 'crashed' ? (
                       <button 
                         onClick={(e) => handleStart(e, server.id!)}
@@ -349,7 +371,8 @@ export default function Servers() {
                   <select
                     value={importForm.serverType}
                     onChange={e => setImportForm(f => ({...f, serverType: e.target.value}))}
-                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 appearance-none"
+                    disabled={detectedImportFields.serverType}
+                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 appearance-none disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <option value="vanilla">Vanilla</option>
                     <option value="paper">Paper</option>
@@ -363,8 +386,9 @@ export default function Servers() {
                     type="text"
                     value={importForm.version}
                     onChange={e => setImportForm(f => ({...f, version: e.target.value}))}
+                    disabled={detectedImportFields.version}
                     placeholder="e.g. 1.21.4"
-                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </div>
                 <div>
@@ -373,7 +397,8 @@ export default function Servers() {
                     <select
                       value={importForm.selectedJar}
                       onChange={e => setImportForm(f => ({...f, selectedJar: e.target.value}))}
-                      className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 appearance-none"
+                      disabled={detectedImportFields.jar}
+                      className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 appearance-none disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {importJars.map(j => <option key={j} value={j}>{j}</option>)}
                     </select>
@@ -382,8 +407,9 @@ export default function Servers() {
                       type="text"
                       value={importForm.selectedJar}
                       onChange={e => setImportForm(f => ({...f, selectedJar: e.target.value}))}
+                      disabled={detectedImportFields.jar}
                       placeholder="server.jar"
-                      className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 font-mono"
+                      className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 font-mono disabled:cursor-not-allowed disabled:opacity-60"
                     />
                   )}
                 </div>
@@ -400,7 +426,12 @@ export default function Servers() {
             </div>
             <div className="p-6 border-t border-[#2a2b2f] flex gap-3 justify-end">
               <button
-                onClick={() => { setShowImport(false); setImportDir(''); setImportJars([]); }}
+                onClick={() => {
+                  setShowImport(false);
+                  setImportDir('');
+                  setImportJars([]);
+                  setDetectedImportFields({ serverType: false, version: false, jar: false });
+                }}
                 className="px-4 py-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white rounded-md text-sm font-medium transition-colors"
               >
                 Cancel
