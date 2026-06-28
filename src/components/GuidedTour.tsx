@@ -51,9 +51,14 @@ export default function GuidedTour() {
       content: 'Give your server a cool name.',
       skipBeacon: true,
       skipScroll: true,
-      buttons: ['skip', 'primary'],
+      buttons: [],
       overlayClickAction: false,
       placement: 'bottom',
+      styles: {
+        tooltipFooter: {
+          display: 'none',
+        }
+      }
     },
     {
       target: '#tour-wizard-next',
