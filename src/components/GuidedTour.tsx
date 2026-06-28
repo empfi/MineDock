@@ -32,6 +32,7 @@ export default function GuidedTour() {
       target: '#tour-servers-tab',
       content: 'Welcome to MineDock! To get started, click the Servers tab to view your hosts.',
       skipBeacon: true,
+      skipScroll: true,
       buttons: ['skip'],
       overlayClickAction: false,
       placement: 'right',
@@ -40,6 +41,7 @@ export default function GuidedTour() {
       target: '#tour-create-server',
       content: 'Click here to create your very first Minecraft server.',
       skipBeacon: true,
+      skipScroll: true,
       buttons: ['skip'],
       overlayClickAction: false,
       placement: 'bottom',
@@ -48,22 +50,35 @@ export default function GuidedTour() {
       target: '#tour-server-name',
       content: 'Give your server a cool name.',
       skipBeacon: true,
-      buttons: ['skip', 'primary'],
+      skipScroll: true,
+      buttons: [],
       overlayClickAction: false,
       placement: 'bottom',
+      styles: {
+        tooltipFooter: {
+          display: 'none',
+        }
+      }
     },
     {
       target: '#tour-wizard-next',
       content: 'Click Next to proceed through the configuration steps and finish creating your server!',
       skipBeacon: true,
-      buttons: ['skip', 'back', 'primary'],
+      skipScroll: true,
+      buttons: [],
       overlayClickAction: false,
       placement: 'top',
+      styles: {
+        tooltipFooter: {
+          display: 'none',
+        }
+      }
     },
     {
       target: '#tour-start-server-container',
       content: 'Your server is ready! Click the Play button to start it up. That is the end of the tutorial, enjoy MineDock!',
       skipBeacon: true,
+      skipScroll: true,
       buttons: ['primary'],
       overlayClickAction: false,
       placement: 'left',
