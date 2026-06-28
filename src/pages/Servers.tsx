@@ -193,7 +193,7 @@ export default function Servers() {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#2a2b2f]">
-            {servers.map((server: Server, index: number) => (
+            {servers.map((server: Server) => (
               <tr 
                 key={server.id} 
                 className="hover:bg-[#202124] transition-colors cursor-pointer group"

@@ -48,17 +48,27 @@ export default function GuidedTour() {
       target: '#tour-server-name',
       content: 'Give your server a cool name.',
       skipBeacon: true,
-      buttons: ['skip', 'primary'],
+      buttons: [],
       overlayClickAction: false,
       placement: 'bottom',
+      styles: {
+        tooltipFooter: {
+          display: 'none',
+        }
+      }
     },
     {
       target: '#tour-wizard-next',
       content: 'Click Next to proceed through the configuration steps and finish creating your server!',
       skipBeacon: true,
-      buttons: ['skip', 'back', 'primary'],
+      buttons: [],
       overlayClickAction: false,
       placement: 'top',
+      styles: {
+        tooltipFooter: {
+          display: 'none',
+        }
+      }
     },
     {
       target: '#tour-start-server-container',
