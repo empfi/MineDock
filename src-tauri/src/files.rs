@@ -11,7 +11,7 @@ pub struct FileInfo {
     pub modified: u64, // unix timestamp
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct LogSummary {
     pub name: String,
     pub modified: u64,
@@ -138,25 +138,59 @@ pub fn read_log_file(base_dir: &str, name: &str) -> Result<String, String> {
 }
 
 pub fn list_log_summaries(base_dir: &str) -> Result<Vec<LogSummary>, String> {
-    let mut logs = list_directory(base_dir, "logs")?
+    let cache_path = Path::new(base_dir).join("logs").join(".minedock-logs-cache.json");
+    let mut cache: std::collections::HashMap<String, LogSummary> = if let Ok(content) = fs::read_to_string(&cache_path) {
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let files = list_directory(base_dir, "logs")?
         .into_iter()
         .filter(|file| !file.is_dir && (file.name.ends_with(".log") || file.name.ends_with(".log.gz")))
-        .map(|file| {
-            let content = read_log_file(base_dir, &file.name)?;
-            let mut summary = LogSummary { name: file.name, modified: file.modified, infos: 0, warnings: 0, errors: 0 };
-            for line in content.lines() {
-                let upper = line.to_ascii_uppercase();
-                if upper.contains("ERROR") || upper.contains("SEVERE") || upper.contains("FATAL") || upper.contains("EXCEPTION") {
-                    summary.errors += 1;
-                } else if upper.contains("WARN") {
-                    summary.warnings += 1;
-                } else if upper.contains("INFO") {
-                    summary.infos += 1;
-                }
+        .collect::<Vec<_>>();
+
+    let mut logs = Vec::with_capacity(files.len());
+    let mut cache_dirty = false;
+
+    for file in files {
+        if let Some(cached) = cache.get(&file.name) {
+            if cached.modified == file.modified {
+                logs.push(cached.clone());
+                continue;
             }
-            Ok(summary)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+        }
+
+        // Cache miss: read, decompress and scan file
+        let content = read_log_file(base_dir, &file.name)?;
+        let mut summary = LogSummary {
+            name: file.name.clone(),
+            modified: file.modified,
+            infos: 0,
+            warnings: 0,
+            errors: 0,
+        };
+        for line in content.lines() {
+            let upper = line.to_ascii_uppercase();
+            if upper.contains("ERROR") || upper.contains("SEVERE") || upper.contains("FATAL") || upper.contains("EXCEPTION") {
+                summary.errors += 1;
+            } else if upper.contains("WARN") {
+                summary.warnings += 1;
+            } else if upper.contains("INFO") {
+                summary.infos += 1;
+            }
+        }
+        cache.insert(file.name.clone(), summary.clone());
+        logs.push(summary);
+        cache_dirty = true;
+    }
+
+    if cache_dirty {
+        if let Ok(serialized) = serde_json::to_string(&cache) {
+            let _ = fs::write(cache_path, serialized);
+        }
+    }
+
     logs.sort_by(|a, b| {
         match (a.name == "latest.log", b.name == "latest.log") {
             (true, false) => std::cmp::Ordering::Less,
@@ -164,6 +198,7 @@ pub fn list_log_summaries(base_dir: &str) -> Result<Vec<LogSummary>, String> {
             _ => b.modified.cmp(&a.modified).then_with(|| b.name.cmp(&a.name)),
         }
     });
+
     Ok(logs)
 }
 

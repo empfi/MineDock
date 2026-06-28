@@ -92,13 +92,26 @@ fn signature(token: &str, message: &str) -> String {
 
 async fn handshake(stream: TcpStream, token: &str, command: &str) -> Result<BufReader<TcpStream>, String> {
     let mut stream = BufReader::new(stream);
+    
     let mut nonce = String::new();
-    stream.read_line(&mut nonce).await.map_err(|e| e.to_string())?;
+    tokio::time::timeout(Duration::from_secs(2), stream.read_line(&mut nonce))
+        .await
+        .map_err(|_| "Reading nonce timed out".to_string())?
+        .map_err(|e| e.to_string())?;
     let nonce = nonce.trim();
+    
     let auth = signature(token, &format!("{nonce}:{command}"));
-    stream.get_mut().write_all(format!("{command} {auth}\n").as_bytes()).await.map_err(|e| e.to_string())?;
+    tokio::time::timeout(Duration::from_secs(2), stream.get_mut().write_all(format!("{command} {auth}\n").as_bytes()))
+        .await
+        .map_err(|_| "Writing signature timed out".to_string())?
+        .map_err(|e| e.to_string())?;
+        
     let mut response = String::new();
-    stream.read_line(&mut response).await.map_err(|e| e.to_string())?;
+    tokio::time::timeout(Duration::from_secs(2), stream.read_line(&mut response))
+        .await
+        .map_err(|_| "Reading response timed out".to_string())?
+        .map_err(|e| e.to_string())?;
+        
     if response.trim() != "OK" { return Err(response.trim().to_string()); }
     Ok(stream)
 }
@@ -113,7 +126,15 @@ pub async fn test_relay(relay: &str, token: &str) -> Result<(), String> {
 }
 
 async fn client_session(relay: String, token: String, port: u16) -> Result<(), String> {
-    let stream = TcpStream::connect(&relay).await.map_err(|e| e.to_string())?;
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&relay)
+        .await
+        .map_err(|e| format!("DNS resolution failed for {relay}: {e}"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!("Could not resolve relay address: {relay}"));
+    }
+
+    let stream = TcpStream::connect(&addrs[..]).await.map_err(|e| e.to_string())?;
     stream.set_nodelay(true).map_err(|e| e.to_string())?;
     let mut control = handshake(stream, &token, &format!("CONTROL {port}")).await?;
     let mut data_sessions = JoinSet::new();
@@ -124,11 +145,11 @@ async fn client_session(relay: String, token: String, port: u16) -> Result<(), S
             return Err("relay disconnected".into());
         }
         let Some(session) = line.trim().strip_prefix("OPEN ") else { continue };
-        let relay = relay.clone();
+        let addrs = addrs.clone();
         let token = token.clone();
         let session = session.to_string();
         data_sessions.spawn(async move {
-            let Ok(stream) = TcpStream::connect(&relay).await else { return };
+            let Ok(stream) = TcpStream::connect(&addrs[..]).await else { return };
             let _ = stream.set_nodelay(true);
             let Ok(mut remote) = handshake(stream, &token, &format!("DATA {port} {session}")).await else { return };
             let Ok(mut local) = TcpStream::connect(("127.0.0.1", port)).await else {

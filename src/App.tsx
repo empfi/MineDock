@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useStore } from './store';
-import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2 } from 'lucide-react';
+import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, Minus } from 'lucide-react';
 import { cn } from './lib/utils';
 
 // Pages
@@ -82,7 +83,7 @@ function Sidebar() {
   };
 
   return (
-    <div className="w-16 sm:w-20 lg:w-64 bg-[#141517] border-r border-[#2a2b2f] h-screen flex flex-col flex-shrink-0">
+    <div className="w-16 sm:w-20 lg:w-64 bg-[#141517] border-r border-[#2a2b2f] h-full flex flex-col flex-shrink-0">
       <div className="h-16 flex items-center justify-center lg:justify-start px-2 lg:px-4 border-b border-[#2a2b2f]">
         {managingServer && (
           <button
@@ -195,6 +196,62 @@ function Sidebar() {
   );
 }
 
+const appWindow = getCurrentWindow();
+
+function TitleBar() {
+  const onMinimize = () => appWindow.minimize();
+  const onMaximize = () => appWindow.toggleMaximize();
+  const onClose = () => appWindow.close();
+
+  return (
+    <div 
+      data-tauri-drag-region 
+      className="h-10 bg-[#141517] border-b border-[#2a2b2f] flex items-center justify-between pl-3 pr-0 select-none flex-shrink-0 z-50"
+    >
+      <div className="flex items-center gap-2 pointer-events-none">
+        <img src="/logo.png" alt="" className="w-5 h-5 rounded" />
+        <span className="text-xs font-semibold text-gray-300 font-sans">MineDock</span>
+      </div>
+      
+      {/* Spacer / Drag region */}
+      <div data-tauri-drag-region className="flex-1 h-full" />
+      
+      <div className="flex items-center">
+        <button
+          onClick={onMinimize}
+          className="h-10 w-11 flex items-center justify-center text-gray-400 hover:bg-[#202124] hover:text-white transition-colors"
+          title="Minimize"
+          aria-label="Minimize"
+        >
+          <svg width="10" height="1" viewBox="0 0 10 1">
+            <line x1="0" y1="0.5" x2="10" y2="0.5" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        </button>
+        <button
+          onClick={onMaximize}
+          className="h-10 w-11 flex items-center justify-center text-gray-400 hover:bg-[#202124] hover:text-white transition-colors"
+          title="Maximize"
+          aria-label="Maximize"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        </button>
+        <button
+          onClick={onClose}
+          className="h-10 w-11 flex items-center justify-center text-gray-400 hover:bg-red-600 hover:text-white transition-colors"
+          title="Close"
+          aria-label="Close"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <path d="M 1,1 L 9,9 M 9,1 L 1,9" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Layout() {
   const { 
     fetchServers, 
@@ -285,11 +342,57 @@ function Layout() {
     };
   }, []);
 
+  const onlinePlayersState = useStore(state => state.onlinePlayers);
+
+  useEffect(() => {
+    const updateDiscordPresence = async () => {
+      try {
+        const runningServer = servers.find(s => s.status === 'online' || s.status === 'starting');
+        if (runningServer) {
+          const playersCur = runningServer.status === 'online' ? (onlinePlayersState[runningServer.id]?.length ?? 0) : undefined;
+          const startTime = runningServer.status === 'online' && runningServer.last_started_at 
+            ? Math.floor(new Date(runningServer.last_started_at).getTime() / 1000) 
+            : undefined;
+
+          await invoke('update_discord_rpc', {
+            details: `Hosting: ${runningServer.name}`,
+            stateStr: `${runningServer.status === 'starting' ? 'Starting...' : 'Online'} (${runningServer.server_type})`,
+            playersCur,
+            installPath: runningServer.install_path,
+            startTime,
+          });
+        } else if (selectedServer) {
+          await invoke('update_discord_rpc', {
+            details: `Managing: ${selectedServer.name}`,
+            stateStr: `Idle | Version ${selectedServer.minecraft_version}`,
+          });
+        } else {
+          await invoke('update_discord_rpc', {
+            details: 'Idle',
+            stateStr: 'Managing Minecraft Servers',
+          });
+        }
+      } catch (err) {
+        console.warn('Discord RPC update skipped/failed:', err);
+      }
+    };
+
+    updateDiscordPresence();
+  }, [servers, selectedServer, onlinePlayersState]);
+
+  useEffect(() => {
+    return () => {
+      invoke('clear_discord_rpc').catch(() => {});
+    };
+  }, []);
+
   return (
-    <div className="flex w-full h-screen overflow-hidden bg-[#0f0f11] text-gray-200 font-sans">
+    <div className="flex flex-col w-full h-screen overflow-hidden bg-[#0f0f11] text-gray-200 font-sans select-none">
       <WindowState />
-      <Sidebar />
-      <main className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <TitleBar />
+      <div className="flex flex-1 overflow-hidden min-h-0">
+        <Sidebar />
+        <main className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {managingServer && (
           <div className="server-tabs flex h-10 flex-shrink-0 overflow-x-auto border-b border-[#2a2b2f] bg-[#141517] px-1">
             {openServerIds.map((id, index) => {
@@ -387,7 +490,8 @@ function Layout() {
           <Route path="/logs" element={<Logs />} />
         </Routes>
         </div>
-      </main>
+        </main>
+      </div>
       <Notifications />
     </div>
   );

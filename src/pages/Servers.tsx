@@ -62,18 +62,20 @@ export default function Servers() {
     if (!importDir || !importForm.name) return;
     setImporting(true);
     try {
-      await invoke('create_new_server', {
+      const newServer = {
         name: importForm.name,
-        serverType: importForm.serverType,
-        minecraftVersion: importForm.version || 'unknown',
-        installPath: importDir,
-        jarPath: importForm.selectedJar,
+        server_type: importForm.serverType,
+        minecraft_version: importForm.version || 'unknown',
+        install_path: importDir,
+        jar_path: importForm.selectedJar,
+        status: 'offline',
+        ram_min: importForm.ramMin,
+        ram_max: importForm.ramMax,
+        java_path: importForm.javaPath,
+        created_at: new Date().toISOString(),
         port: importForm.port,
-        ramMin: importForm.ramMin,
-        ramMax: importForm.ramMax,
-        javaPath: importForm.javaPath,
-        backupsPath: `${importDir}\\backups`,
-      });
+      };
+      await invoke('create_new_server', { server: newServer });
       await fetchServers();
       setShowImport(false);
       setImportDir('');

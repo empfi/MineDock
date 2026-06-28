@@ -23,10 +23,54 @@ function LogLine({ line }: { line: string }) {
   return <div className={`px-4 py-0.5 break-words ${color}`}>{line || ' '}</div>;
 }
 
+function LogViewer({ content }: { content: string }) {
+  const linesArray = content.split(/\r?\n/);
+  const [displayCount, setDisplayCount] = useState(500);
+
+  const totalLines = linesArray.length;
+  const startIdx = Math.max(0, totalLines - displayCount);
+  const renderedLines = linesArray.slice(startIdx);
+  const remaining = startIdx;
+
+  if (totalLines === 0 || (totalLines === 1 && linesArray[0] === '')) {
+    return <div className="py-10 text-center text-gray-600">Log is empty.</div>;
+  }
+
+  return (
+    <div className="flex flex-col">
+      {remaining > 0 && (
+        <div className="px-4 py-2 border-b border-[#2a2b2f] bg-[#101113] flex justify-between items-center mb-2">
+          <span className="text-gray-500 text-xs font-sans">{remaining.toLocaleString()} older lines hidden</span>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => setDisplayCount(prev => prev + 1000)}
+              className="text-xs bg-[#2a2b2f] hover:bg-[#3a3b3f] text-blue-400 hover:text-blue-300 px-3 py-1.5 rounded transition-colors font-sans font-medium"
+            >
+              Load 1,000 more lines
+            </button>
+            <button 
+              onClick={() => setDisplayCount(totalLines)}
+              className="text-xs text-gray-400 hover:text-white px-3 py-1.5 transition-colors font-sans"
+            >
+              Load all
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="py-2">
+        {renderedLines.map((line, index) => (
+          <LogLine key={index + startIdx} line={line} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Logs() {
   const { servers, selectedServerId } = useStore();
   const server = servers.find(item => item.id === selectedServerId);
   const [logs, setLogs] = useState<LogSummary[]>([]);
+  const [visibleLogCount, setVisibleLogCount] = useState(15);
   const [openLog, setOpenLog] = useState<string | null>('latest.log');
   const [contents, setContents] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -45,7 +89,10 @@ export default function Logs() {
     }
   };
 
-  useEffect(() => { loadLogs(); }, [selectedServerId]);
+  useEffect(() => {
+    setVisibleLogCount(15);
+    loadLogs();
+  }, [selectedServerId]);
 
   useEffect(() => {
     if (!server || !openLog || contents[openLog] !== undefined) return;
@@ -63,7 +110,7 @@ export default function Logs() {
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Logs</h1>
           <p className="text-gray-400">Latest and archived server logs</p>
         </div>
-        <button onClick={() => { setContents({}); loadLogs(); }} disabled={loading} className="flex items-center gap-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50">
+        <button onClick={() => { setContents({}); setVisibleLogCount(15); loadLogs(); }} disabled={loading} className="flex items-center gap-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50">
           <RefreshCw size={18} className={loading ? 'animate-spin' : ''} /> Refresh
         </button>
       </div>
@@ -74,7 +121,7 @@ export default function Logs() {
         <div className="py-20 flex justify-center text-gray-500"><Loader2 className="animate-spin" /></div>
       ) : logs.length ? (
         <div className="space-y-3">
-          {logs.map(log => {
+          {logs.slice(0, visibleLogCount).map(log => {
             const open = openLog === log.name;
             const content = contents[log.name];
             return (
@@ -94,19 +141,28 @@ export default function Logs() {
                 </button>
 
                 {open && (
-                  <div className="border-t border-[#2a2b2f] bg-[#09090a] max-h-[34rem] overflow-auto py-3 font-mono text-xs leading-relaxed">
+                  <div className="border-t border-[#2a2b2f] bg-[#09090a] max-h-[34rem] overflow-auto py-0 font-mono text-xs leading-relaxed">
                     {content === undefined ? (
                       <div className="py-10 flex justify-center text-gray-600"><Loader2 className="animate-spin" /></div>
-                    ) : content ? (
-                      content.split(/\r?\n/).map((line, index) => <LogLine key={index} line={line} />)
                     ) : (
-                      <div className="py-10 text-center text-gray-600">Log is empty.</div>
+                      <LogViewer content={content} />
                     )}
                   </div>
                 )}
               </section>
             );
           })}
+
+          {logs.length > visibleLogCount && (
+            <div className="flex justify-center pt-4">
+              <button
+                onClick={() => setVisibleLogCount(prev => prev + 15)}
+                className="bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-5 py-2.5 rounded-md font-sans text-sm font-medium transition-colors border border-[#2a2b2f]"
+              >
+                Load more archived logs ({logs.length - visibleLogCount} remaining)
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="border border-dashed border-[#2a2b2f] rounded-lg py-16 text-center text-gray-500">No logs found.</div>

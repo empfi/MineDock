@@ -7,6 +7,7 @@ mod backups;
 mod commands;
 mod worlds;
 pub mod tunnel;
+mod discord;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -27,6 +28,10 @@ pub fn run() {
             
             let process_manager = process::ProcessManager::new(app.handle().clone());
             app.manage(process_manager);
+            
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            app.manage(discord::DiscordState { tx });
+            discord::start_rpc_worker(rx);
             tunnel::start_client(app.handle().clone());
 
             Ok(())
@@ -78,6 +83,8 @@ pub fn run() {
             commands::delete_server_world,
             commands::export_server_world,
             commands::import_server_world,
+            discord::update_discord_rpc,
+            discord::clear_discord_rpc,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

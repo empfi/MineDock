@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Database, Plus, Trash2, RotateCcw, Loader2 } from 'lucide-react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { notify } from '../components/Notifications';
@@ -21,8 +22,29 @@ export default function Backups() {
   const actionInProgress = serverId != null ? backupJobs[serverId] : undefined;
 
   const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [progress, setProgress] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState<{ type: 'restore' | 'delete'; name: string } | null>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    
+    listen<number>('backup-progress', (event) => {
+      setProgress(event.payload);
+    }).then(fn => {
+      unlisten = fn;
+    });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!actionInProgress) {
+      setProgress(null);
+    }
+  }, [actionInProgress]);
 
   // Use a ref to track the current load request so stale calls don't flip loading back on
   const loadingRef = useRef(false);
@@ -95,14 +117,30 @@ export default function Backups() {
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Backups</h1>
           <p className="text-gray-400">Manage server backups.</p>
         </div>
-        <button
-          onClick={handleCreate}
-          disabled={!!actionInProgress}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
-        >
-          {actionInProgress ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-          Create Backup
-        </button>
+        <div className="flex items-center gap-4">
+          {actionInProgress && (
+            <div className="flex flex-col w-48 font-sans">
+              <div className="flex justify-between items-center text-xs mb-1 font-medium">
+                <span className="text-gray-400 truncate max-w-[120px]">{actionInProgress}</span>
+                <span className="text-blue-400 font-semibold">{progress !== null ? `${progress}%` : '0%'}</span>
+              </div>
+              <div className="w-full h-1.5 bg-[#2a2b2f] rounded-full overflow-hidden relative">
+                <div 
+                  className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out" 
+                  style={{ width: `${progress ?? 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+          <button
+            onClick={handleCreate}
+            disabled={!!actionInProgress}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
+          >
+            {actionInProgress ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+            Create Backup
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto bg-[#1c1d21] border border-[#2a2b2f] rounded-lg">

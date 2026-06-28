@@ -285,13 +285,17 @@ pub fn read_file_content(base_dir: String, sub_path: String) -> Result<String, S
 }
 
 #[tauri::command]
-pub fn get_log_summaries(base_dir: String) -> Result<Vec<LogSummary>, String> {
-    list_log_summaries(&base_dir)
+pub async fn get_log_summaries(base_dir: String) -> Result<Vec<LogSummary>, String> {
+    tokio::task::spawn_blocking(move || {
+        list_log_summaries(&base_dir)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn read_log_content(base_dir: String, name: String) -> Result<String, String> {
-    read_log_file(&base_dir, &name)
+pub async fn read_log_content(base_dir: String, name: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        read_log_file(&base_dir, &name)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -318,9 +322,9 @@ pub async fn import_dropped_files(base_dir: String, sub_path: String, paths: Vec
 }
 
 #[tauri::command]
-pub async fn create_mc_backup(server_path: String, backup_name: String) -> Result<(), String> {
+pub async fn create_mc_backup(app: tauri::AppHandle, server_path: String, backup_name: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        create_backup(&server_path, &backup_name)
+        create_backup(&app, &server_path, &backup_name)
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -330,9 +334,9 @@ pub fn list_mc_backups(server_path: String) -> Result<Vec<BackupInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn restore_mc_backup(server_path: String, backup_name: String) -> Result<(), String> {
+pub async fn restore_mc_backup(app: tauri::AppHandle, server_path: String, backup_name: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        restore_backup(&server_path, &backup_name)
+        restore_backup(&app, &server_path, &backup_name)
     }).await.map_err(|e| e.to_string())?
 }
 

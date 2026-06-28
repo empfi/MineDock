@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { File as FileIcon, Folder, Trash2, ArrowUpCircle, Save, X, PlusCircle, Edit2, UploadCloud, ChevronDown } from 'lucide-react';
+import { File as FileIcon, Folder, Trash2, ArrowUpCircle, Save, X, PlusCircle, Edit2, UploadCloud, ChevronDown, Search } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { notify } from '../components/Notifications';
@@ -62,6 +62,29 @@ export default function Files() {
   const [createName, setCreateName] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const savedScrollTop = useRef(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    setSearchQuery('');
+  }, [currentPath]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (editingFile) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [editingFile]);
+
+  const filteredFiles = files.filter(file =>
+    file.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   useEffect(() => {
     if (selectedServer) {
@@ -300,23 +323,50 @@ export default function Files() {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 w-full h-full flex flex-col">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">File Manager</h1>
-          <p className="text-gray-400 font-mono text-sm mt-2 flex items-center gap-2">
+          <p className="text-gray-400 font-mono text-sm mt-1 flex items-center gap-2">
             /{currentPath !== '.' ? currentPath : ''}
           </p>
         </div>
-        <div className="relative">
-          <button onClick={() => setCreateMenuOpen(open => !open)} className="flex items-center gap-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-3 py-2 rounded-md text-sm transition-colors">
-            <PlusCircle size={16} /> Create <ChevronDown size={14} />
-          </button>
-          {createMenuOpen && (
-            <div className="absolute right-0 top-11 z-30 w-40 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
-              <button onClick={() => { setCreateType('file'); setCreateMenuOpen(false); }} className="w-full rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white">Text file</button>
-              <button onClick={() => { setCreateType('folder'); setCreateMenuOpen(false); }} className="w-full rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white">Folder</button>
-            </div>
-          )}
+        <div className="flex items-center gap-3">
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+            <input
+              ref={searchRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setSearchQuery('');
+                  searchRef.current?.blur();
+                }
+              }}
+              placeholder="Search files... (Ctrl+F)"
+              className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md pl-9 pr-8 py-2 text-sm text-white focus:outline-none focus:border-blue-500 font-sans"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <div className="relative">
+            <button onClick={() => setCreateMenuOpen(open => !open)} className="flex items-center gap-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-3 py-2 rounded-md text-sm transition-colors">
+              <PlusCircle size={16} /> Create <ChevronDown size={14} />
+            </button>
+            {createMenuOpen && (
+              <div className="absolute right-0 top-11 z-30 w-40 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
+                <button onClick={() => { setCreateType('file'); setCreateMenuOpen(false); }} className="w-full rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white">Text file</button>
+                <button onClick={() => { setCreateType('folder'); setCreateMenuOpen(false); }} className="w-full rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white">Folder</button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -363,10 +413,14 @@ export default function Files() {
                   </tr>
                 ))}
               </>
-            ) : files.length === 0 ? (
-              <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-500">Directory is empty.</td></tr>
+            ) : filteredFiles.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                  {searchQuery ? `No files matching "${searchQuery}"` : 'Directory is empty.'}
+                </td>
+              </tr>
             ) : (
-              files.map(file => (
+              filteredFiles.map(file => (
                 <tr key={file.name} className="h-14 hover:bg-[#202124] transition-colors cursor-pointer group" onClick={() => handleFileClick(file)}>
                   <td className="px-6 py-3 font-medium text-white">
                     <div className="flex items-center gap-3">

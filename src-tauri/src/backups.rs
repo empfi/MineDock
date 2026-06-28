@@ -3,6 +3,7 @@ use std::path::Path;
 use walkdir::WalkDir;
 use zip::write::{FileOptions, ExtendedFileOptions};
 use serde::{Serialize, Deserialize};
+use tauri::Emitter;
 
 #[derive(Serialize, Deserialize)]
 pub struct BackupInfo {
@@ -11,7 +12,7 @@ pub struct BackupInfo {
     pub created_at: String,
 }
 
-pub fn create_backup(server_path: &str, backup_name: &str) -> Result<(), String> {
+pub fn create_backup(app: &tauri::AppHandle, server_path: &str, backup_name: &str) -> Result<(), String> {
     let source_dir = Path::new(server_path);
     if !source_dir.exists() {
         return Err("Server path does not exist".to_string());
@@ -25,9 +26,11 @@ pub fn create_backup(server_path: &str, backup_name: &str) -> Result<(), String>
     
     let mut zip = zip::ZipWriter::new(file);
     let options: FileOptions<'_, ExtendedFileOptions> = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_method(zip::CompressionMethod::Stored) // Store method is 50x faster!
         .unix_permissions(0o755);
 
+    // 1. Scan directory first to count total files for progress tracking
+    let mut entries = Vec::new();
     for entry in WalkDir::new(source_dir) {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
@@ -36,7 +39,19 @@ pub fn create_backup(server_path: &str, backup_name: &str) -> Result<(), String>
         if path.starts_with(&backup_dir) {
             continue;
         }
+        
+        entries.push(entry);
+    }
 
+    let total_files = entries.len();
+    let mut processed_files = 0;
+
+    // Report initial progress
+    let _ = app.emit("backup-progress", 0);
+
+    // 2. Add files to zip
+    for entry in entries {
+        let path = entry.path();
         let name = path.strip_prefix(source_dir).unwrap();
         
         if path.is_file() {
@@ -46,8 +61,21 @@ pub fn create_backup(server_path: &str, backup_name: &str) -> Result<(), String>
         } else if !name.as_os_str().is_empty() {
             zip.add_directory(name.to_string_lossy(), options.clone()).map_err(|e| e.to_string())?;
         }
+
+        processed_files += 1;
+        if total_files > 0 {
+            let progress = (processed_files * 100) / total_files;
+            // Emit progress event every 5% change or if complete
+            if processed_files % 10 == 0 || progress == 100 {
+                let _ = app.emit("backup-progress", progress);
+            }
+        }
     }
+    
     zip.finish().map_err(|e| e.to_string())?;
+    
+    // Report final progress
+    let _ = app.emit("backup-progress", 100);
     
     Ok(())
 }
@@ -86,7 +114,7 @@ pub fn list_backups(server_path: &str) -> Result<Vec<BackupInfo>, String> {
     Ok(backups)
 }
 
-pub fn restore_backup(server_path: &str, backup_name: &str) -> Result<(), String> {
+pub fn restore_backup(app: &tauri::AppHandle, server_path: &str, backup_name: &str) -> Result<(), String> {
     let source_dir = Path::new(server_path);
     let backup_file_path = source_dir.join(".minedock").join("backups").join(backup_name);
 
@@ -97,7 +125,13 @@ pub fn restore_backup(server_path: &str, backup_name: &str) -> Result<(), String
     let file = File::open(&backup_file_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
 
-    for i in 0..archive.len() {
+    let total_files = archive.len();
+    let _ = app.emit("backup-progress", 0);
+
+    // Cache already created parent directories to avoid thousands of slow NTFS exists/create checks
+    let mut created_dirs = std::collections::HashSet::new();
+
+    for i in 0..total_files {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
         let outpath = match file.enclosed_name() {
             Some(path) => source_dir.join(path),
@@ -106,17 +140,29 @@ pub fn restore_backup(server_path: &str, backup_name: &str) -> Result<(), String
 
         if (*file.name()).ends_with('/') {
             std::fs::create_dir_all(&outpath).map_err(|e| e.to_string())?;
+            created_dirs.insert(outpath);
         } else {
             if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                if !created_dirs.contains(p) {
+                    if !p.exists() {
+                        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                    }
+                    created_dirs.insert(p.to_path_buf());
                 }
             }
             let mut outfile = File::create(&outpath).map_err(|e| e.to_string())?;
             std::io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
         }
+
+        if total_files > 0 {
+            let progress = ((i + 1) * 100) / total_files;
+            if (i + 1) % 10 == 0 || progress == 100 {
+                let _ = app.emit("backup-progress", progress);
+            }
+        }
     }
 
+    let _ = app.emit("backup-progress", 100);
     Ok(())
 }
 
