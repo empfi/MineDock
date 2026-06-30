@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ChevronLeft, ChevronRight, Download, Loader2, Package, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Download, Loader2, Package, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { useStore } from '../store';
 import { notify } from '../components/Notifications';
+import { safeApply } from '../lib/safeApply';
+import { reportInstall } from '../components/ProgressHub';
 
 type InstalledPlugin = { file_name: string; name: string; version: string; description: string; enabled: boolean; icon_url?: string; source?: string; project_id?: string; latest_version?: string; update_available: boolean };
 type MarketplacePlugin = { source: string; id: string; name: string; description: string; icon_url?: string; downloads: number };
@@ -59,6 +61,7 @@ export default function Additions() {
 
   // Filter state
   const [projectType, setProjectType] = useState<'plugin' | 'mod' | 'modpack'>('plugin');
+  const searchRequestId = useRef(0);
 
   const setInstalled = (update: InstalledPlugin[] | ((prev: InstalledPlugin[]) => InstalledPlugin[])) => {
     setInstalledState(prev => {
@@ -101,7 +104,7 @@ export default function Additions() {
     updateChecks.set(server.install_path, Date.now());
     setCheckingUpdates(true);
     try {
-      await invoke('check_plugin_updates', { serverPath: server.install_path, minecraftVersion: server.minecraft_version });
+      await invoke('check_plugin_updates', { serverPath: server.install_path, minecraftVersion: server.minecraft_version, serverType: server.server_type });
     } catch (error) {
       updateChecks.delete(server.install_path);
       notify(`Update check failed: ${error}`, 'error');
@@ -148,37 +151,64 @@ export default function Additions() {
 
   const search = async (term = query, requestedPage = page, pType = projectType) => {
     if (!server) return;
+    const reqId = ++searchRequestId.current;
     setBusy('search');
-    try { setResults(await invoke('search_plugins', { query: term.trim(), minecraftVersion: server.minecraft_version, page: requestedPage, projectType: pType })); }
-    catch (error) { notify(`Marketplace search failed: ${error}`, 'error'); }
-    finally { setBusy(''); }
+    try {
+      const data = await invoke<MarketplacePlugin[]>('search_plugins', { query: term.trim(), minecraftVersion: server.minecraft_version, page: requestedPage, projectType: pType });
+      if (reqId === searchRequestId.current) {
+        setResults(data);
+      }
+    } catch (error) {
+      if (reqId === searchRequestId.current) {
+        notify(`Marketplace search failed: ${error}`, 'error');
+      }
+    } finally {
+      if (reqId === searchRequestId.current) {
+        setBusy('');
+      }
+    }
   };
 
   const install = async (plugin: MarketplacePlugin, replaceFile?: string, version?: string) => {
     if (!server) return;
     const key = `${plugin.source}:${plugin.id}`;
     setPluginBusy(items => [...items, key]);
+    reportInstall({ id: key, name: plugin.name, state: 'downloading' });
+    const installType = replaceFile
+      ? (['fabric', 'forge', 'neoforge'].includes(server.server_type) ? 'mod' : 'plugin')
+      : projectType;
     try {
-      if (projectType === 'modpack') {
-        if (!version) {
-          const versions = await invoke('get_plugin_versions', { source: plugin.source, projectId: plugin.id, minecraftVersion: server.minecraft_version });
-          version = (versions as any[])[0]?.version;
-        }
-        await invoke('install_modpack', {
-          serverPath: server.install_path, serverId: server.id, projectId: plugin.id, versionId: version
-        });
-      } else {
-        await invoke('install_marketplace_plugin', {
-          serverPath: server.install_path, source: plugin.source, projectId: plugin.id,
-          pluginName: plugin.name, minecraftVersion: server.minecraft_version, projectType, replaceFile, version,
-        });
-      }
+      await safeApply({
+        server,
+        label: `${replaceFile ? 'Update' : 'Install'} ${plugin.name}`,
+        operation: async () => {
+          if (installType === 'modpack') {
+            if (!version) {
+              const versions = await invoke('get_plugin_versions', { source: plugin.source, projectId: plugin.id, minecraftVersion: server.minecraft_version });
+              version = (versions as any[])[0]?.version;
+            }
+            await invoke('install_modpack', {
+              serverPath: server.install_path, serverId: server.id, projectId: plugin.id, versionId: version
+            });
+          } else {
+            await invoke('install_marketplace_plugin', {
+              serverPath: server.install_path, source: plugin.source, projectId: plugin.id,
+              pluginName: plugin.name, minecraftVersion: server.minecraft_version, projectType: installType, replaceFile, version,
+              serverType: server.server_type,
+            });
+          }
+        },
+      });
       notify(`${plugin.name} ${replaceFile ? 'updated' : 'installed'}. Restart host to load it.`, 'success');
+      reportInstall({ id: key, name: plugin.name, state: 'done' });
       updateChecks.delete(server.install_path);
-      await loadInstalled(false);
-      checkUpdates(true);
-    } catch (error) { notify(`Plugin install failed: ${error}`, 'error'); }
-    finally { setPluginBusy(items => items.filter(item => item !== key)); }
+    } catch (error) {
+      reportInstall({ id: key, name: plugin.name, state: 'failed' });
+      notify(`Plugin install failed: ${error}`, 'error');
+    } finally {
+      setPluginBusy(items => items.filter(item => item !== key));
+    }
+    void loadInstalled(false).then(() => checkUpdates(true));
   };
 
   const openUpdate = async (plugin: InstalledPlugin) => {
@@ -198,6 +228,21 @@ export default function Additions() {
 
   if (!server) return <div className="p-8 text-center text-gray-500">Select a host first.</div>;
   const unsupported = server.server_type === 'vanilla';
+  if (unsupported) {
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-400">
+            <AlertTriangle size={24} />
+          </div>
+          <h1 className="text-xl font-semibold text-white">Additions unavailable</h1>
+          <p className="mt-2 text-sm leading-relaxed text-gray-400">
+            Vanilla servers cannot load plugins, mods, or modpacks.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col p-4 sm:p-6 lg:p-8">
@@ -205,7 +250,6 @@ export default function Additions() {
         <h1 className="text-3xl font-bold text-white">Marketplace</h1>
         <p className="mt-1 text-gray-400">Install plugins, mods, and modpacks directly into your server.</p>
       </div>
-      {unsupported && projectType === 'plugin' && <div className="mb-5 rounded-md border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-300">Vanilla hosts cannot load Paper plugins.</div>}
       <div className="mb-5 flex gap-2">
         {(['installed', 'marketplace'] as const).map(item => <button key={item} onClick={() => setTab(item)} className={`rounded-md px-4 py-2 text-sm font-medium capitalize ${tab === item ? 'bg-blue-600 text-white' : 'bg-[#1c1d21] text-gray-400 hover:text-white'}`}>{item}</button>)}
       </div>
@@ -253,9 +297,9 @@ export default function Additions() {
                 <div className="font-semibold text-white">{plugin.name} <span className="ml-2 text-xs font-normal text-gray-600">{plugin.version}</span>{plugin.update_available && <span className="ml-2 rounded bg-blue-500/10 px-2 py-0.5 text-xs font-normal text-blue-400">Update {plugin.latest_version}</span>}</div>
                 <div className="truncate text-sm text-gray-500">{plugin.description || plugin.file_name}</div>
               </div>
-              <button onClick={() => openUpdate(plugin)} disabled={pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) || unsupported || !plugin.project_id} className="flex items-center gap-2 rounded-md bg-[#2a2b2f] px-3 py-2 text-sm text-gray-200 hover:bg-[#34353a] disabled:opacity-30">{pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) ? <Loader2 className="animate-spin" size={15} /> : <RefreshCw size={15} />} Update</button>
+              <button title={!plugin.project_id ? 'Marketplace source could not be identified' : unsupported ? 'This server type cannot load additions' : 'Choose a version to install'} onClick={() => openUpdate(plugin)} disabled={pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) || unsupported || !plugin.project_id} className="action-button bg-[#2a2b2f] px-3 py-2 text-sm text-gray-200 hover:bg-[#34353a] disabled:opacity-30" style={{ '--action-width': '6.5rem' } as React.CSSProperties}>{pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) ? <Loader2 className="animate-spin" size={15} /> : <RefreshCw size={15} />} {pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) ? 'Updating' : 'Update'}</button>
               <button onClick={async () => { await invoke('toggle_plugin', { serverPath: server.install_path, fileName: plugin.file_name, enabled: !plugin.enabled }); loadInstalled(); }} className={`relative h-5 w-9 rounded-full ${plugin.enabled ? 'bg-blue-600' : 'bg-[#34353a]'}`}><span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${plugin.enabled ? 'translate-x-4' : ''}`} /></button>
-              <button onClick={async () => { await invoke('delete_plugin', { serverPath: server.install_path, fileName: plugin.file_name }); loadInstalled(); }} className="rounded p-2 text-gray-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 size={17} /></button>
+              <button onClick={async () => { await invoke('delete_plugin', { serverPath: server.install_path, fileName: plugin.file_name }); setInstalled(items => items.filter(item => item.file_name !== plugin.file_name)); }} className="rounded p-2 text-gray-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 size={17} /></button>
             </div>
           ))}</div> : <div className="py-16 text-center text-gray-600">No plugins installed.</div>
         ) : results.length ? <div className="grid gap-3 p-4 md:grid-cols-2">{results.map(plugin => (

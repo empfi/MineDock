@@ -18,14 +18,26 @@ export default function GuidedTour() {
     if (run) {
       if (location.pathname === '/servers' && stepIndex === 0) {
         setStepIndex(1);
-      } else if (location.pathname === '/wizard' && stepIndex === 1) {
-        setStepIndex(2);
-      } else if (location.pathname === '/servers' && (stepIndex === 2 || stepIndex === 3)) {
+      } else if (location.pathname === '/servers' && stepIndex >= 2) {
         // Resume tour at the start button when they return to servers page
-        setStepIndex(4);
+        setStepIndex(16);
       }
     }
   }, [location.pathname, run, stepIndex]);
+
+  useEffect(() => {
+    const finishWizardTour = () => setStepIndex(16);
+    const completeTour = () => {
+      setRun(false);
+      localStorage.setItem('minedock_tour_seen', 'true');
+    };
+    window.addEventListener('minedock:wizard-complete', finishWizardTour);
+    window.addEventListener('minedock:tutorial-complete', completeTour);
+    return () => {
+      window.removeEventListener('minedock:wizard-complete', finishWizardTour);
+      window.removeEventListener('minedock:tutorial-complete', completeTour);
+    };
+  }, []);
 
   const steps: Step[] = [
     {
@@ -51,18 +63,13 @@ export default function GuidedTour() {
       content: 'Give your server a cool name.',
       skipBeacon: true,
       skipScroll: true,
-      buttons: [],
+      buttons: ['primary'],
       overlayClickAction: false,
       placement: 'bottom',
-      styles: {
-        tooltipFooter: {
-          display: 'none',
-        }
-      }
     },
     {
       target: '#tour-wizard-next',
-      content: 'Click Next to proceed through the configuration steps and finish creating your server!',
+      content: 'Click Next after choosing the server name.',
       skipBeacon: true,
       skipScroll: true,
       buttons: [],
@@ -75,13 +82,116 @@ export default function GuidedTour() {
       }
     },
     {
+      target: '#tour-install-path',
+      content: 'Choose where the server files will be stored. Use an absolute Windows path or Browse.',
+      skipBeacon: true,
+      buttons: ['primary'],
+      overlayClickAction: false,
+      placement: 'bottom',
+    },
+    {
+      target: '#tour-wizard-next',
+      content: 'Click Next after selecting a valid installation path.',
+      skipBeacon: true,
+      buttons: [],
+      overlayClickAction: false,
+      placement: 'top',
+      styles: { tooltipFooter: { display: 'none' } },
+    },
+    {
+      target: '#tour-software-version',
+      content: 'Select the server fork and Minecraft version you want to install.',
+      skipBeacon: true,
+      buttons: ['primary'],
+      overlayClickAction: false,
+      placement: 'bottom',
+    },
+    {
+      target: '#tour-wizard-next',
+      content: 'Click Next after selecting the fork and version.',
+      skipBeacon: true,
+      buttons: [],
+      overlayClickAction: false,
+      placement: 'top',
+      styles: { tooltipFooter: { display: 'none' } },
+    },
+    {
+      target: '#tour-ram',
+      content: 'Set minimum and maximum RAM. Keep the maximum within available system memory.',
+      skipBeacon: true,
+      buttons: ['primary'],
+      overlayClickAction: false,
+      placement: 'bottom',
+    },
+    {
+      target: '#tour-wizard-next',
+      content: 'Click Next after setting RAM.',
+      skipBeacon: true,
+      buttons: [],
+      overlayClickAction: false,
+      placement: 'top',
+      styles: { tooltipFooter: { display: 'none' } },
+    },
+    {
+      target: '#tour-port',
+      content: 'Choose the network port players will use. The default is usually correct.',
+      skipBeacon: true,
+      buttons: ['primary'],
+      overlayClickAction: false,
+      placement: 'bottom',
+    },
+    {
+      target: '#tour-wizard-next',
+      content: 'Click Next after choosing the server port.',
+      skipBeacon: true,
+      buttons: [],
+      overlayClickAction: false,
+      placement: 'top',
+      styles: { tooltipFooter: { display: 'none' } },
+    },
+    {
+      target: '#tour-java',
+      content: 'Select a detected Java installation or enter the Java executable path.',
+      skipBeacon: true,
+      buttons: ['primary'],
+      overlayClickAction: false,
+      placement: 'bottom',
+    },
+    {
+      target: '#tour-wizard-next',
+      content: 'Click Next after confirming the Java path.',
+      skipBeacon: true,
+      buttons: [],
+      overlayClickAction: false,
+      placement: 'top',
+      styles: { tooltipFooter: { display: 'none' } },
+    },
+    {
+      target: '#tour-eula',
+      content: 'Review and accept the Minecraft EULA before installation. Velocity does not require this.',
+      skipBeacon: true,
+      buttons: ['primary'],
+      overlayClickAction: false,
+      placement: 'bottom',
+    },
+    {
+      target: '#tour-install-server',
+      content: 'Click Install Server to create and download the server.',
+      skipBeacon: true,
+      buttons: [],
+      overlayClickAction: false,
+      placement: 'top',
+      styles: { tooltipFooter: { display: 'none' } },
+    },
+    {
       target: '#tour-start-server-container',
       content: 'Your server is ready! Click the Play button to start it up. That is the end of the tutorial, enjoy MineDock!',
       skipBeacon: true,
       skipScroll: true,
-      buttons: ['primary'],
+      buttons: [],
       overlayClickAction: false,
       placement: 'left',
+      styles: { tooltipFooter: { display: 'none' } },
     }
   ];
 
@@ -99,10 +209,11 @@ export default function GuidedTour() {
     }
   };
 
-  if (!run) return null;
+  if (!run || location.pathname === '/wizard') return null;
 
   return (
     <Joyride
+      key={stepIndex}
       steps={steps}
       run={run}
       stepIndex={stepIndex}

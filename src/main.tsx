@@ -3,7 +3,9 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 
-document.addEventListener("contextmenu", event => event.preventDefault());
+document.addEventListener("contextmenu", event => {
+  if (!(event.target as HTMLElement).closest("[data-allow-context-menu]")) event.preventDefault();
+});
 document.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
   if (event.ctrlKey && key === "f") {

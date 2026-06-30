@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "minedock",
+  "productName": "MineDock",
   "version": "0.1.0",
   "identifier": "com.jules.minedock",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "minedock",
+        "title": "MineDock - Overview",
         "width": 1000,
         "height": 700,
         "decorations": false,

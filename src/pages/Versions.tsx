@@ -4,6 +4,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { notify } from '../components/Notifications';
 import { Download, Loader2, AlertTriangle } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
+import { safeApply } from '../lib/safeApply';
+import { reportInstall } from '../components/ProgressHub';
 
 interface VersionManifest {
   latest: { release: string; snapshot: string };
@@ -87,6 +89,22 @@ export default function Versions() {
     );
   }
 
+  if (['online', 'starting', 'stopping', 'restarting'].includes(selectedServer.status)) {
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-400">
+            <AlertTriangle size={24} />
+          </div>
+          <h1 className="text-xl font-semibold text-white">Stop server to change versions</h1>
+          <p className="mt-2 text-sm leading-relaxed text-gray-400">
+            The running Java process locks the server jar. Wait until the server is fully offline before installing another version.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const checkIsDowngrade = (selectedVersionId: string) => {
     const currentVersion = selectedServer.minecraft_version;
     const currentIdx = versionsList.findIndex(v => v.id === currentVersion);
@@ -115,47 +133,49 @@ export default function Versions() {
   };
 
   const proceedWithUpdate = async (v: VersionItem) => {
-    const isRunning = selectedServer.status === 'online' || selectedServer.status === 'starting';
-    const message = `Are you sure you want to change the server version to ${v.id}?${
-      isRunning ? '\n\nThe server is currently running and will be stopped first, then restarted automatically.' : ''
-    }`;
+    const message = `Are you sure you want to change the server version to ${v.id}?`;
     
     if (!confirm(message)) return;
 
     setDownloadingVersion(v.id);
     setStatusMessage('Stopping server...');
     setDownloadProgress(0);
+    const installId = `version-${selectedServer.id}-${v.id}`;
+    reportInstall({ id: installId, name: `${selectedServer.name} ${v.id}`, state: 'downloading' });
 
     try {
-      // 1. Stop server if running
-      if (isRunning) {
-        await invoke('stop_mc_server', { id: selectedServer.id });
-        // Poll status until it is offline
-        let checks = 0;
-        while (checks < 30) {
-          await fetchServers();
-          const s = useStore.getState().servers.find(s => s.id === selectedServer.id);
-          if (s && s.status === 'offline') {
-            break;
+      await safeApply({
+        server: selectedServer,
+        label: `Update to ${v.id}`,
+        onStatus: setStatusMessage,
+        rollbackMetadata: {
+          command: 'update_server_version_info',
+          args: {
+            id: selectedServer.id,
+            version: selectedServer.minecraft_version,
+            jarPath: selectedServer.jar_path || 'server.jar',
           }
-          await new Promise(r => setTimeout(r, 1000));
-          checks++;
-        }
-      }
-
-      // 2. Download new jar (replacing the executable that runs the server)
+        },
+        operation: async () => {
+      // 1. Download new jar (replacing the executable that runs the server)
       setStatusMessage(`Downloading ${selectedServer.server_type} jar...`);
-      const jarName = selectedServer.jar_path || 'server.jar';
+      let jarName = selectedServer.jar_path || 'server.jar';
       const jarPath = `${selectedServer.install_path}\\${jarName}`;
 
       const unlisten = await listen<{downloaded: number, total: number}>('download-progress', (event) => {
         const { downloaded, total } = event.payload;
         setDownloadProgress((downloaded / total) * 100);
+        reportInstall({ id: installId, name: `${selectedServer.name} ${v.id}`, downloaded, total, state: 'downloading' });
       });
 
       try {
         if (selectedServer.server_type === 'vanilla') {
           await invoke('download_mc_version', { url: v.url || '', path: jarPath });
+        } else if (['fabric', 'forge', 'neoforge'].includes(selectedServer.server_type)) {
+          jarName = await invoke<string>('install_loader', {
+            serverType: selectedServer.server_type, version: v.id,
+            serverPath: selectedServer.install_path, javaPath: selectedServer.java_path,
+          });
         } else {
           await invoke('download_software', {
             serverType: selectedServer.server_type,
@@ -167,7 +187,7 @@ export default function Versions() {
         unlisten();
       }
 
-      // 3. Update DB
+      // 2. Update DB
       setStatusMessage('Updating server profile...');
       await invoke('update_server_version_info', {
         id: selectedServer.id,
@@ -175,22 +195,19 @@ export default function Versions() {
         jarPath: jarName
       });
 
-      // 4. Accept EULA
+      // 3. Accept EULA
       await invoke('accept_eula', { serverPath: selectedServer.install_path });
 
-      // 5. Refresh servers list
+      // 4. Refresh servers list. Safe Apply verifies on the next manual start.
       await fetchServers();
 
-      // 6. Restart server if it was running
-      if (isRunning) {
-        setStatusMessage('Restarting server...');
-        await invoke('start_mc_server', { id: selectedServer.id });
-        await fetchServers();
-      }
-
-      notify(`Server updated to version ${v.id}.`, 'success');
+      notify(`Version ${v.id} installed. Start the server to verify it.`, 'info');
+      reportInstall({ id: installId, name: `${selectedServer.name} ${v.id}`, state: 'done' });
+        },
+      });
 
     } catch (err: any) {
+      reportInstall({ id: installId, name: `${selectedServer.name} ${v.id}`, state: 'failed' });
       console.error(err);
       notify(`Failed to update server version: ${err}`, 'error');
     } finally {
@@ -277,10 +294,14 @@ export default function Versions() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button
-                      className="inline-flex items-center gap-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-3 py-1.5 rounded text-sm transition-colors"
+                      disabled={downloadingVersion !== null || v.id === selectedServer.minecraft_version}
+                      title={v.id === selectedServer.minecraft_version ? 'This version is already installed' : downloadingVersion ? `Updating to ${downloadingVersion}` : `Install ${v.id}`}
+                      className="action-button bg-[#2a2b2f] px-3 py-1.5 text-sm text-white transition-colors hover:bg-[#3a3b3f] disabled:opacity-50"
+                      style={{ '--action-width': '7.5rem' } as React.CSSProperties}
                       onClick={() => handleDownload(v)}
                     >
-                      <Download size={14} /> Download
+                      {downloadingVersion === v.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                      {v.id === selectedServer.minecraft_version ? 'Installed' : downloadingVersion === v.id ? 'Installing' : 'Download'}
                     </button>
                   </td>
                 </tr>
@@ -297,12 +318,14 @@ export default function Versions() {
               <AlertTriangle size={32} />
               <h2 className="text-xl font-bold text-white">Warning: Downgrade Detected</h2>
             </div>
-            
+
             <p className="text-gray-300 text-sm mb-6 leading-relaxed">
               You are trying to downgrade your Minecraft server from version <strong className="text-white">{selectedServer.minecraft_version}</strong> to <strong className="text-white">{pendingVersion.id}</strong>. 
               Downgrading a world can cause severe corruption, lose loaded chunks, or crash the server.
-              <br/><br/>
-              Please ensure you have backed up your server files before continuing.
+            </p>
+
+            <p className="text-gray-300 text-sm mb-6 leading-relaxed">
+              A restore point will be created automatically before the update.
             </p>
 
             <div className="flex gap-3 justify-end">
@@ -333,7 +356,7 @@ export default function Versions() {
             {downloadProgress > 0 && (
               <div className="w-full">
                 <div className="h-2 w-full bg-[#2a2b2f] rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500 transition-all duration-200" style={{ width: `${downloadProgress}%` }}></div>
+                  <div className="h-full bg-blue-500" style={{ width: `${downloadProgress}%` }}></div>
                 </div>
                 <p className="text-center text-xs text-gray-500 mt-2">{Math.round(downloadProgress)}%</p>
               </div>

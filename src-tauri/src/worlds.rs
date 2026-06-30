@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use zip::write::{FileOptions, ExtendedFileOptions};
+use zip::write::{ExtendedFileOptions, FileOptions};
 
 #[derive(Serialize)]
 pub struct WorldInfo {
@@ -19,7 +19,9 @@ fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
-        && !name.chars().any(|c| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
+        && !name
+            .chars()
+            .any(|c| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
 }
 
 fn properties_path(root: &Path) -> PathBuf {
@@ -27,9 +29,10 @@ fn properties_path(root: &Path) -> PathBuf {
 }
 
 fn property(root: &Path, key: &str) -> Option<String> {
-    fs::read_to_string(properties_path(root)).ok()?.lines().find_map(|line| {
-        line.strip_prefix(&format!("{key}=")).map(str::to_string)
-    })
+    fs::read_to_string(properties_path(root))
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}=")).map(str::to_string))
 }
 
 fn set_property(root: &Path, key: &str, value: &str) -> Result<(), String> {
@@ -37,14 +40,17 @@ fn set_property(root: &Path, key: &str, value: &str) -> Result<(), String> {
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let prefix = format!("{key}=");
     let mut found = false;
-    let mut lines: Vec<String> = content.lines().map(|line| {
-        if line.starts_with(&prefix) {
-            found = true;
-            format!("{prefix}{value}")
-        } else {
-            line.to_string()
-        }
-    }).collect();
+    let mut lines: Vec<String> = content
+        .lines()
+        .map(|line| {
+            if line.starts_with(&prefix) {
+                found = true;
+                format!("{prefix}{value}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
     if !found {
         lines.push(format!("{prefix}{value}"));
     }
@@ -52,14 +58,21 @@ fn set_property(root: &Path, key: &str, value: &str) -> Result<(), String> {
 }
 
 fn dir_stats(path: &Path) -> (u64, u64) {
-    WalkDir::new(path).into_iter().filter_map(Result::ok).fold((0, 0), |(size, modified), entry| {
-        let metadata = entry.metadata().ok();
-        let bytes = metadata.as_ref().filter(|meta| meta.is_file()).map_or(0, |meta| meta.len());
-        let timestamp = metadata.and_then(|meta| meta.modified().ok())
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |duration| duration.as_secs());
-        (size + bytes, modified.max(timestamp))
-    })
+    WalkDir::new(path)
+        .into_iter()
+        .filter_map(Result::ok)
+        .fold((0, 0), |(size, modified), entry| {
+            let metadata = entry.metadata().ok();
+            let bytes = metadata
+                .as_ref()
+                .filter(|meta| meta.is_file())
+                .map_or(0, |meta| meta.len());
+            let timestamp = metadata
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |duration| duration.as_secs());
+            (size + bytes, modified.max(timestamp))
+        })
 }
 
 pub fn list_worlds(server_path: &str) -> Result<Vec<WorldInfo>, String> {
@@ -68,11 +81,19 @@ pub fn list_worlds(server_path: &str) -> Result<Vec<WorldInfo>, String> {
     let mut worlds = Vec::new();
     for entry in fs::read_dir(root).map_err(|e| e.to_string())?.flatten() {
         let path = entry.path();
-        if !path.is_dir() || (!path.join("level.dat").is_file() && !path.join(".minedock-pending").is_file()) {
+        if !path.is_dir()
+            || (!path.join("level.dat").is_file() && !path.join(".minedock-pending").is_file())
+        {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        let kind = if name.ends_with("_nether") { "nether" } else if name.ends_with("_the_end") { "end" } else { "overworld" };
+        let kind = if name.ends_with("_nether") {
+            "nether"
+        } else if name.ends_with("_the_end") {
+            "end"
+        } else {
+            "overworld"
+        };
         let (size, modified) = dir_stats(&path);
         worlds.push(WorldInfo {
             active: kind == "overworld" && name == active,
@@ -95,11 +116,15 @@ pub fn create_world(server_path: &str, name: &str, seed: &str, kind: &str) -> Re
     let folder_name = match kind {
         "overworld" => name.to_string(),
         "nether" => {
-            if !root.join(name).is_dir() { return Err("Create the matching overworld first".to_string()); }
+            if !root.join(name).is_dir() {
+                return Err("Create the matching overworld first".to_string());
+            }
             format!("{name}_nether")
         }
         "end" => {
-            if !root.join(name).is_dir() { return Err("Create the matching overworld first".to_string()); }
+            if !root.join(name).is_dir() {
+                return Err("Create the matching overworld first".to_string());
+            }
             format!("{name}_the_end")
         }
         _ => return Err("Invalid world type".to_string()),
@@ -135,7 +160,8 @@ pub fn rename_world(server_path: &str, old_name: &str, new_name: &str) -> Result
     for suffix in ["", "_nether", "_the_end"] {
         let from = root.join(format!("{old_name}{suffix}"));
         if from.exists() {
-            fs::rename(from, root.join(format!("{new_name}{suffix}"))).map_err(|e| e.to_string())?;
+            fs::rename(from, root.join(format!("{new_name}{suffix}")))
+                .map_err(|e| e.to_string())?;
         }
     }
     if property(root, "level-name").as_deref() == Some(old_name) {
@@ -260,7 +286,8 @@ mod tests {
     use super::*;
 
     fn setup_server(id: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("minedock-worlds-{}-{}", std::process::id(), id));
+        let root =
+            std::env::temp_dir().join(format!("minedock-worlds-{}-{}", std::process::id(), id));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("server.properties"), "level-name=world\n").unwrap();

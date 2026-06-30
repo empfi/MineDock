@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
 import { notify } from '../components/Notifications';
-import { Code, LayoutList } from 'lucide-react';
+import { Code, LayoutList, Loader2, Save } from 'lucide-react';
 import Editor from '@monaco-editor/react';
-import UnsavedChangesBar from '../components/UnsavedChangesBar';
 
 const normalizePropsString = (content: string) => {
   return content
@@ -200,24 +199,9 @@ export default function Properties() {
   };
 
   const currentProperties = mode === 'visual' ? stringifyProperties(parsedProps, rawProps) : rawProps;
-  const propertiesDirty = !loading && (
-    mode === 'visual'
-      ? normalizePropsString(currentProperties) !== normalizePropsString(savedRawProps)
-      : currentProperties !== savedRawProps
-  );
+  const propertiesDirty = !loading && normalizePropsString(currentProperties) !== normalizePropsString(savedRawProps);
   const profileDirty = profileLoaded && JSON.stringify([profileName, profileJar, profileMinRam, profileMaxRam, profileJava]) !== savedProfile;
-  const resetChanges = () => {
-    setRawProps(savedRawProps);
-    parseProperties(savedRawProps);
-    if (selectedServer) {
-      const profile = JSON.parse(savedProfile || JSON.stringify([selectedServer.name, selectedServer.jar_path, selectedServer.ram_min, selectedServer.ram_max, selectedServer.java_path]));
-      setProfileName(profile[0]);
-      setProfileJar(profile[1]);
-      setProfileMinRam(profile[2]);
-      setProfileMaxRam(profile[3]);
-      setProfileJava(profile[4]);
-    }
-  };
+  const dirty = propertiesDirty || profileDirty;
 
   if (!selectedServer) {
     return <div className="p-8 text-center text-gray-500">Select a server from the sidebar.</div>;
@@ -232,7 +216,6 @@ export default function Properties() {
     { key: 'hardcore', label: 'Hardcore', type: 'boolean' },
     { key: 'pvp', label: 'PvP', type: 'boolean' },
     { key: 'online-mode', label: 'Online Mode (Authentication)', type: 'boolean' },
-    { key: 'allow-flight', label: 'Allow Flight', type: 'boolean' },
     { key: 'enable-command-block', label: 'Enable Command Blocks', type: 'boolean' },
     { key: 'view-distance', label: 'View Distance', type: 'number' },
     { key: 'simulation-distance', label: 'Simulation Distance', type: 'number' },
@@ -269,6 +252,16 @@ export default function Properties() {
               </button>
             </div>
           )}
+          <button
+            onClick={handleSaveAll}
+            disabled={!dirty || saving || (tab === 'properties' && (loading || !!error))}
+            title={!dirty ? 'No unsaved changes' : error ? 'Fix the configuration error before saving' : saving ? 'Saving changes' : 'Save changes'}
+            className="action-button bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
+            style={{ '--action-width': '7.5rem' } as React.CSSProperties}
+          >
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+            {saving ? 'Saving...' : 'Save'}
+          </button>
         </div>
       </div>
 
@@ -469,13 +462,6 @@ export default function Properties() {
           </div>
         </div>
       )}
-      <UnsavedChangesBar
-        dirty={propertiesDirty || profileDirty}
-        saving={saving}
-        onSave={handleSaveAll}
-        onReset={resetChanges}
-        saveDisabled={tab === 'properties' && (loading || !!error)}
-      />
     </div>
   );
 }

@@ -3,7 +3,7 @@ use sha2::{Digest, Sha512};
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Cursor, Read},
+    io::Read,
     path::Path,
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
@@ -60,6 +60,7 @@ pub struct PluginDownload {
     pub url: String,
     pub file_name: String,
     pub version: String,
+    pub dependencies: Vec<(String, Option<String>)>,
 }
 
 #[derive(Serialize)]
@@ -79,17 +80,23 @@ pub struct MarketplacePluginDetails {
 fn yaml_value(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|line| {
         let (found, value) = line.split_once(':')?;
-        (found.trim().trim_matches(['\'', '"']) == key).then(|| {
-            value.trim().trim_matches(['\'', '"', ',']).to_string()
-        })
+        (found.trim().trim_matches(['\'', '"']) == key)
+            .then(|| value.trim().trim_matches(['\'', '"', ',']).to_string())
     })
 }
 
 fn plugin_stub(path: &Path) -> InstalledPlugin {
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     let enabled = file_name.ends_with(".jar");
     InstalledPlugin {
-        name: file_name.trim_end_matches(".disabled").trim_end_matches(".jar").to_string(),
+        name: file_name
+            .trim_end_matches(".disabled")
+            .trim_end_matches(".jar")
+            .to_string(),
         version: "Unknown".into(),
         description: String::new(),
         file_name,
@@ -106,17 +113,32 @@ fn plugin_stub(path: &Path) -> InstalledPlugin {
 fn inspect_plugin(path: &Path) -> InstalledPlugin {
     let mut result = plugin_stub(path);
     result.sha512 = hash_file(path);
-    let Ok(file) = File::open(path) else { return result };
-    let Ok(mut jar) = zip::ZipArchive::new(file) else { return result };
-    for descriptor in ["plugin.yml", "paper-plugin.yml", "fabric.mod.json", "quilt.mod.json"] {
+    let Ok(file) = File::open(path) else {
+        return result;
+    };
+    let Ok(mut jar) = zip::ZipArchive::new(file) else {
+        return result;
+    };
+    for descriptor in [
+        "plugin.yml",
+        "paper-plugin.yml",
+        "fabric.mod.json",
+        "quilt.mod.json",
+    ] {
         if let Ok(mut entry) = jar.by_name(descriptor) {
             let mut content = String::new();
             if entry.read_to_string(&mut content).is_ok() {
                 if descriptor.ends_with(".json") {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                        if let Some(name) = json["name"].as_str() { result.name = name.to_string(); }
-                        if let Some(version) = json["version"].as_str() { result.version = version.to_string(); }
-                        if let Some(desc) = json["description"].as_str() { result.description = desc.to_string(); }
+                        if let Some(name) = json["name"].as_str() {
+                            result.name = name.to_string();
+                        }
+                        if let Some(version) = json["version"].as_str() {
+                            result.version = version.to_string();
+                        }
+                        if let Some(desc) = json["description"].as_str() {
+                            result.description = desc.to_string();
+                        }
                     }
                 } else {
                     result.name = yaml_value(&content, "name").unwrap_or(result.name);
@@ -131,12 +153,18 @@ fn inspect_plugin(path: &Path) -> InstalledPlugin {
 }
 
 fn hash_file(path: &Path) -> String {
-    let Ok(mut file) = File::open(path) else { return String::new() };
+    let Ok(mut file) = File::open(path) else {
+        return String::new();
+    };
     let mut hasher = Sha512::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let Ok(read) = file.read(&mut buffer) else { return String::new() };
-        if read == 0 { break; }
+        let Ok(read) = file.read(&mut buffer) else {
+            return String::new();
+        };
+        if read == 0 {
+            break;
+        }
         hasher.update(&buffer[..read]);
     }
     hex::encode(hasher.finalize())
@@ -145,9 +173,9 @@ fn hash_file(path: &Path) -> String {
 pub fn list_plugins(server_path: &str) -> Result<Vec<InstalledPlugin>, String> {
     let plugins_dir = Path::new(server_path).join("plugins");
     let mods_dir = Path::new(server_path).join("mods");
-    
+
     let mut paths: Vec<_> = Vec::new();
-    
+
     for dir in &[plugins_dir, mods_dir] {
         if dir.exists() {
             if let Ok(entries) = std::fs::read_dir(dir) {
@@ -158,26 +186,45 @@ pub fn list_plugins(server_path: &str) -> Result<Vec<InstalledPlugin>, String> {
             }
         }
     }
-    
+
     paths.sort();
-    let fingerprint: Vec<_> = paths.iter().filter_map(|path| {
-        let metadata = path.metadata().ok()?;
-        let modified = metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
-        Some((path.file_name()?.to_string_lossy().into_owned(), metadata.len(), modified))
-    }).collect();
+    let fingerprint: Vec<_> = paths
+        .iter()
+        .filter_map(|path| {
+            let metadata = path.metadata().ok()?;
+            let modified = metadata
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            Some((
+                path.file_name()?.to_string_lossy().into_owned(),
+                metadata.len(),
+                modified,
+            ))
+        })
+        .collect();
     let key = server_path.to_string();
     let cache = PLUGIN_CACHE.get_or_init(Default::default);
-    if let Some(hit) = cache.lock().map_err(|e| e.to_string())?.get(&key)
-        .filter(|entry| entry.fingerprint == fingerprint) {
+    if let Some(hit) = cache
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&key)
+        .filter(|entry| entry.fingerprint == fingerprint)
+    {
         return Ok(hit.plugins.clone());
     }
-    let mut plugins: Vec<_> = paths.iter().map(|path| plugin_stub(path)).collect();
+    let mut plugins: Vec<_> = paths.iter().map(|path| inspect_plugin(path)).collect();
     plugins.sort_by_key(|plugin| plugin.name.to_ascii_lowercase());
-    cache.lock().map_err(|e| e.to_string())?.insert(key, PluginCache {
-        fingerprint,
-        plugins: plugins.clone(),
-        updates_checked: None,
-    });
+    cache.lock().map_err(|e| e.to_string())?.insert(
+        key,
+        PluginCache {
+            fingerprint,
+            plugins: plugins.clone(),
+            updates_checked: None,
+        },
+    );
     Ok(plugins)
 }
 
@@ -210,42 +257,110 @@ fn is_update_available(installed: &str, latest: &str) -> bool {
     true
 }
 
-async fn enrich_from_modrinth(client: &reqwest::Client, plugin: &mut InstalledPlugin, loaders: &str, game_versions: &str) -> Result<bool, String> {
-    if plugin.sha512.is_empty() { return Ok(false); }
-    let response = client.get(format!("https://api.modrinth.com/v2/version_file/{}", plugin.sha512))
-        .query(&[("algorithm", "sha512")]).send().await.map_err(|e| e.to_string())?;
-    if !response.status().is_success() { return Ok(false); }
+async fn enrich_from_modrinth(
+    client: &reqwest::Client,
+    plugin: &mut InstalledPlugin,
+    loaders: &str,
+    game_versions: &str,
+) -> Result<bool, String> {
+    if plugin.sha512.is_empty() {
+        return Ok(false);
+    }
+    let response = client
+        .get(format!(
+            "https://api.modrinth.com/v2/version_file/{}",
+            plugin.sha512
+        ))
+        .query(&[("algorithm", "sha512")])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Ok(false);
+    }
     let version: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    let project_id = version["project_id"].as_str().ok_or("Missing Modrinth project")?.to_string();
-    let project: serde_json::Value = client.get(format!("https://api.modrinth.com/v2/project/{project_id}"))
-        .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-        .json().await.map_err(|e| e.to_string())?;
-    let versions: serde_json::Value = client.get(format!("https://api.modrinth.com/v2/project/{project_id}/version"))
-        .query(&[("loaders", loaders), ("game_versions", game_versions), ("include_changelog", "false")])
-        .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-        .json().await.map_err(|e| e.to_string())?;
-    let latest = versions.as_array().and_then(|items| items.first()).and_then(|item| item["version_number"].as_str()).map(str::to_owned);
+    let project_id = version["project_id"]
+        .as_str()
+        .ok_or("Missing Modrinth project")?
+        .to_string();
+    let project: serde_json::Value = client
+        .get(format!("https://api.modrinth.com/v2/project/{project_id}"))
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let versions: serde_json::Value = client
+        .get(format!(
+            "https://api.modrinth.com/v2/project/{project_id}/version"
+        ))
+        .query(&[
+            ("loaders", loaders),
+            ("game_versions", game_versions),
+            ("include_changelog", "false"),
+        ])
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let latest = versions
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|item| item["version_number"].as_str())
+        .map(str::to_owned);
     plugin.icon_url = project["icon_url"].as_str().map(str::to_owned);
     plugin.source = Some("Modrinth".into());
     plugin.project_id = Some(project_id);
     plugin.latest_version = latest.clone();
-    plugin.update_available = latest.as_deref().is_some_and(|latest| is_update_available(&plugin.version, latest));
+    plugin.update_available = latest
+        .as_deref()
+        .is_some_and(|latest| is_update_available(&plugin.version, latest));
     Ok(true)
 }
 
-async fn enrich_from_hangar(client: &reqwest::Client, plugin: &mut InstalledPlugin, minecraft: &str) -> Result<(), String> {
-    let hangar: serde_json::Value = client.get("https://hangar.papermc.io/api/v1/projects")
-        .query(&[("query", plugin.name.as_str()), ("limit", "5"), ("platform", "PAPER")])
-        .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-        .json().await.map_err(|e| e.to_string())?;
-    if let Some(project) = hangar["result"].as_array().into_iter().flatten()
-        .find(|project| project["name"].as_str().is_some_and(|name| name.eq_ignore_ascii_case(&plugin.name))) {
-        if let (Some(owner), Some(slug)) = (project["namespace"]["owner"].as_str(), project["namespace"]["slug"].as_str()) {
+async fn enrich_from_hangar(
+    client: &reqwest::Client,
+    plugin: &mut InstalledPlugin,
+    minecraft: &str,
+) -> Result<(), String> {
+    let hangar: serde_json::Value = client
+        .get("https://hangar.papermc.io/api/v1/projects")
+        .query(&[
+            ("query", plugin.name.as_str()),
+            ("limit", "5"),
+            ("platform", "PAPER"),
+        ])
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(project) = hangar["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|project| {
+            project["name"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(&plugin.name))
+        })
+    {
+        if let (Some(owner), Some(slug)) = (
+            project["namespace"]["owner"].as_str(),
+            project["namespace"]["slug"].as_str(),
+        ) {
             let id = format!("{owner}/{slug}");
             plugin.icon_url = project["avatarUrl"].as_str().map(str::to_owned);
             plugin.source = Some("Hangar".into());
             plugin.project_id = Some(id.clone());
-            if let Ok(download) = resolve_download("Hangar", &id, minecraft, None, "plugin").await {
+            if let Ok(download) = resolve_download("Hangar", &id, minecraft, None, "plugin", "paper").await {
                 plugin.latest_version = Some(download.version.clone());
                 plugin.update_available = is_update_available(&plugin.version, &download.version);
             }
@@ -254,29 +369,51 @@ async fn enrich_from_hangar(client: &reqwest::Client, plugin: &mut InstalledPlug
     Ok(())
 }
 
-pub async fn stream_plugin_updates(app: tauri::AppHandle, server_path: &str, minecraft: &str) -> Result<(), String> {
+pub async fn stream_plugin_updates(
+    app: tauri::AppHandle,
+    server_path: &str,
+    minecraft: &str,
+    server_type: &str,
+) -> Result<(), String> {
     let server_path = server_path.to_owned();
     let scan_path = server_path.clone();
     let mut plugins = tokio::task::spawn_blocking(move || list_plugins(&scan_path))
-        .await.map_err(|e| e.to_string())??;
+        .await
+        .map_err(|e| e.to_string())??;
     let key = server_path.to_string();
     let cache = PLUGIN_CACHE.get_or_init(Default::default);
-    if cache.lock().map_err(|e| e.to_string())?.get(&key)
+    if cache
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&key)
         .and_then(|entry| entry.updates_checked)
-        .is_some_and(|checked| checked.elapsed() < UPDATE_CACHE_TTL) {
+        .is_some_and(|checked| checked.elapsed() < UPDATE_CACHE_TTL)
+    {
         for plugin in plugins {
             let _ = app.emit("plugin-update-info", plugin);
         }
         return Ok(());
     }
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
-    let loaders = serde_json::json!(["paper", "purpur", "spigot", "bukkit"]).to_string();
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let loaders = if ["fabric", "quilt", "forge", "neoforge"].contains(&server_type) {
+        serde_json::json!([server_type]).to_string()
+    } else {
+        serde_json::json!(["paper", "purpur", "spigot", "bukkit", "velocity"]).to_string()
+    };
     let game_versions = serde_json::json!([minecraft]).to_string();
     for plugin in &mut plugins {
-        let path = Path::new(&server_path).join("plugins").join(&plugin.file_name);
+        let plugin_path = Path::new(&server_path).join("plugins").join(&plugin.file_name);
+        let path = if plugin_path.exists() { plugin_path } else { Path::new(&server_path).join("mods").join(&plugin.file_name) };
         *plugin = tokio::task::spawn_blocking(move || inspect_plugin(&path))
-            .await.map_err(|e| e.to_string())?;
-        if !enrich_from_modrinth(&client, plugin, &loaders, &game_versions).await.unwrap_or(false) {
+            .await
+            .map_err(|e| e.to_string())?;
+        if !enrich_from_modrinth(&client, plugin, &loaders, &game_versions)
+            .await
+            .unwrap_or(false)
+        {
             let _ = enrich_from_hangar(&client, plugin, minecraft).await;
         }
         let _ = app.emit("plugin-update-info", plugin.clone());
@@ -288,43 +425,94 @@ pub async fn stream_plugin_updates(app: tauri::AppHandle, server_path: &str, min
     Ok(())
 }
 
-pub async fn list_marketplace_versions(source: &str, id: &str, minecraft: &str) -> Result<Vec<MarketplaceVersion>, String> {
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
+pub async fn list_marketplace_versions(
+    source: &str,
+    id: &str,
+    minecraft: &str,
+) -> Result<Vec<MarketplaceVersion>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| e.to_string())?;
     if source == "Modrinth" {
         let loaders = serde_json::json!(["paper", "purpur", "spigot", "bukkit"]).to_string();
         let game_versions = serde_json::json!([minecraft]).to_string();
-        let data: serde_json::Value = client.get(format!("https://api.modrinth.com/v2/project/{id}/version"))
-            .query(&[("loaders", loaders.as_str()), ("game_versions", game_versions.as_str()), ("include_changelog", "false")])
-            .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
-        return Ok(data.as_array().into_iter().flatten().filter_map(|item| Some(MarketplaceVersion {
-            version: item["version_number"].as_str()?.into(),
-            published: item["date_published"].as_str().unwrap_or("").into(),
-        })).collect());
+        let data: serde_json::Value = client
+            .get(format!("https://api.modrinth.com/v2/project/{id}/version"))
+            .query(&[
+                ("loaders", loaders.as_str()),
+                ("game_versions", game_versions.as_str()),
+                ("include_changelog", "false"),
+            ])
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(data
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                Some(MarketplaceVersion {
+                    version: item["version_number"].as_str()?.into(),
+                    published: item["date_published"].as_str().unwrap_or("").into(),
+                })
+            })
+            .collect());
     }
-    let data: serde_json::Value = client.get(format!("https://hangar.papermc.io/api/v1/projects/{id}/versions"))
-        .query(&[("limit", "100"), ("platform", "PAPER"), ("platformVersion", minecraft)])
-        .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-        .json().await.map_err(|e| e.to_string())?;
-    Ok(data["result"].as_array().into_iter().flatten().filter_map(|item| Some(MarketplaceVersion {
-        version: item["name"].as_str()?.into(),
-        published: item["createdAt"].as_str().unwrap_or("").into(),
-    })).collect())
+    let data: serde_json::Value = client
+        .get(format!(
+            "https://hangar.papermc.io/api/v1/projects/{id}/versions"
+        ))
+        .query(&[
+            ("limit", "100"),
+            ("platform", "PAPER"),
+            ("platformVersion", minecraft),
+        ])
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(data["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            Some(MarketplaceVersion {
+                version: item["name"].as_str()?.into(),
+                published: item["createdAt"].as_str().unwrap_or("").into(),
+            })
+        })
+        .collect())
 }
 
 pub fn set_plugin_enabled(server_path: &str, file_name: &str, enabled: bool) -> Result<(), String> {
-    if file_name.contains(['/', '\\']) { return Err("Invalid plugin filename".into()); }
+    if file_name.contains(['/', '\\']) {
+        return Err("Invalid plugin filename".into());
+    }
     let mut directory = Path::new(server_path).join("plugins");
     if !directory.join(file_name).exists() {
         directory = Path::new(server_path).join("mods");
     }
     let source = directory.join(file_name);
-    let target_name = if enabled { file_name.trim_end_matches(".disabled").to_string() } else { format!("{file_name}.disabled") };
+    let target_name = if enabled {
+        file_name.trim_end_matches(".disabled").to_string()
+    } else {
+        format!("{file_name}.disabled")
+    };
     std::fs::rename(source, directory.join(target_name)).map_err(|e| e.to_string())
 }
 
 pub fn remove_plugin(server_path: &str, file_name: &str) -> Result<(), String> {
-    if file_name.contains(['/', '\\']) { return Err("Invalid plugin filename".into()); }
+    if file_name.contains(['/', '\\']) {
+        return Err("Invalid plugin filename".into());
+    }
     let mut path = Path::new(server_path).join("plugins").join(file_name);
     if !path.exists() {
         path = Path::new(server_path).join("mods").join(file_name);
@@ -332,8 +520,16 @@ pub fn remove_plugin(server_path: &str, file_name: &str) -> Result<(), String> {
     std::fs::remove_file(path).map_err(|e| e.to_string())
 }
 
-pub async fn search_marketplace(query: &str, minecraft: &str, page: u32, project_type: Option<&str>) -> Result<Vec<MarketplacePlugin>, String> {
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
+pub async fn search_marketplace(
+    query: &str,
+    minecraft: &str,
+    page: u32,
+    project_type: Option<&str>,
+) -> Result<Vec<MarketplacePlugin>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| e.to_string())?;
     let mut results: Vec<MarketplacePlugin> = Vec::new();
 
     let p_type = project_type.unwrap_or("plugin");
@@ -343,10 +539,24 @@ pub async fn search_marketplace(query: &str, minecraft: &str, page: u32, project
     let fetch_limit = if query_hangar { 12 } else { 50 }; // Fetch more to allow filtering
     let limit = if query_hangar { 12 } else { 24 };
     let offset = (page * limit).to_string();
-    let facets = serde_json::json!([[format!("project_type:{p_type}")], ["server_side:required", "server_side:optional"], [format!("versions:{minecraft}")]]).to_string();
-    let modrinth_res = client.get("https://api.modrinth.com/v2/search")
-        .query(&[("query", query), ("limit", &fetch_limit.to_string()), ("offset", offset.as_str()), ("index", "downloads"), ("facets", facets.as_str())])
-        .send().await.and_then(reqwest::Response::error_for_status);
+    let facets = serde_json::json!([
+        [format!("project_type:{p_type}")],
+        ["server_side:required", "server_side:optional"],
+        [format!("versions:{minecraft}")]
+    ])
+    .to_string();
+    let modrinth_res = client
+        .get("https://api.modrinth.com/v2/search")
+        .query(&[
+            ("query", query),
+            ("limit", &fetch_limit.to_string()),
+            ("offset", offset.as_str()),
+            ("index", "downloads"),
+            ("facets", facets.as_str()),
+        ])
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status);
     if let Ok(response) = modrinth_res {
         if let Ok(data) = response.json::<serde_json::Value>().await {
             if let Some(hits) = data["hits"].as_array() {
@@ -360,10 +570,14 @@ pub async fn search_marketplace(query: &str, minecraft: &str, page: u32, project
                             continue;
                         }
                     }
-                    if count >= limit { break; }
+                    if count >= limit {
+                        break;
+                    }
                     count += 1;
-                    
-                    if let (Some(id), Some(name)) = (hit["project_id"].as_str(), hit["title"].as_str()) {
+
+                    if let (Some(id), Some(name)) =
+                        (hit["project_id"].as_str(), hit["title"].as_str())
+                    {
                         results.push(MarketplacePlugin {
                             source: "Modrinth".into(),
                             id: id.into(),
@@ -381,9 +595,17 @@ pub async fn search_marketplace(query: &str, minecraft: &str, page: u32, project
     if query_hangar {
         let limit = if true { 12 } else { 24 };
         let offset = (page * limit).to_string();
-        let hangar_res = client.get("https://hangar.papermc.io/api/v1/projects")
-            .query(&[("query", query), ("limit", &limit.to_string()), ("offset", offset.as_str()), ("platform", "PAPER")])
-            .send().await.and_then(reqwest::Response::error_for_status);
+        let hangar_res = client
+            .get("https://hangar.papermc.io/api/v1/projects")
+            .query(&[
+                ("query", query),
+                ("limit", &limit.to_string()),
+                ("offset", offset.as_str()),
+                ("platform", "PAPER"),
+            ])
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status);
         if let Ok(response) = hangar_res {
             if let Ok(data) = response.json::<serde_json::Value>().await {
                 if let Some(result) = data["result"].as_array() {
@@ -411,13 +633,25 @@ pub async fn search_marketplace(query: &str, minecraft: &str, page: u32, project
     Ok(results)
 }
 
-pub async fn get_marketplace_plugin_details(source: &str, id: &str) -> Result<MarketplacePluginDetails, String> {
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
+pub async fn get_marketplace_plugin_details(
+    source: &str,
+    id: &str,
+) -> Result<MarketplacePluginDetails, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| e.to_string())?;
     if source == "Modrinth" {
         let url = format!("https://api.modrinth.com/v2/project/{id}");
-        let project: serde_json::Value = client.get(&url)
-            .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
+        let project: serde_json::Value = client
+            .get(&url)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
 
         let mut gallery = Vec::new();
         if let Some(images) = project["gallery"].as_array() {
@@ -454,16 +688,23 @@ pub async fn get_marketplace_plugin_details(source: &str, id: &str) -> Result<Ma
         })
     } else if source == "Hangar" {
         let url = format!("https://hangar.papermc.io/api/v1/projects/{id}");
-        let project: serde_json::Value = client.get(&url)
-            .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
+        let project: serde_json::Value = client
+            .get(&url)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
 
         let page_url = format!("https://hangar.papermc.io/api/v1/pages/{id}/main");
         let body = if let Ok(resp) = client.get(&page_url).send().await {
             if let Ok(page_json) = resp.json::<serde_json::Value>().await {
-                page_json["contents"].as_str().unwrap_or_else(|| {
-                    page_json["markdown"].as_str().unwrap_or("").into()
-                }).to_string()
+                page_json["contents"]
+                    .as_str()
+                    .unwrap_or_else(|| page_json["markdown"].as_str().unwrap_or("").into())
+                    .to_string()
             } else {
                 String::new()
             }
@@ -495,48 +736,140 @@ pub async fn get_marketplace_plugin_details(source: &str, id: &str) -> Result<Ma
     }
 }
 
-pub async fn resolve_download(source: &str, id: &str, minecraft: &str, requested_version: Option<&str>, project_type: &str) -> Result<PluginDownload, String> {
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
+pub async fn resolve_download(
+    source: &str,
+    id: &str,
+    minecraft: &str,
+    requested_version: Option<&str>,
+    project_type: &str,
+    server_type: &str,
+) -> Result<PluginDownload, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| e.to_string())?;
     if source == "Modrinth" {
-        let loaders_arr = if project_type == "mod" || project_type == "modpack" { vec!["fabric", "quilt", "forge", "neoforge"] } else { vec!["paper", "purpur", "spigot", "bukkit", "velocity", "waterfall", "bungeecord"] };
+        let loaders_arr = if project_type == "mod" || project_type == "modpack" {
+            vec![server_type]
+        } else {
+            vec![
+                "paper",
+                "purpur",
+                "spigot",
+                "bukkit",
+                "velocity",
+                "waterfall",
+                "bungeecord",
+            ]
+        };
         let loaders = serde_json::json!(loaders_arr).to_string();
         let versions = serde_json::json!([minecraft]).to_string();
-        let data: serde_json::Value = client.get(format!("https://api.modrinth.com/v2/project/{id}/version"))
-            .query(&[("loaders", loaders.as_str()), ("game_versions", versions.as_str()), ("include_changelog", "false")])
-            .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
+        let data: serde_json::Value = client
+            .get(format!("https://api.modrinth.com/v2/project/{id}/version"))
+            .query(&[
+                ("loaders", loaders.as_str()),
+                ("game_versions", versions.as_str()),
+                ("include_changelog", "false"),
+            ])
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
         let items = data.as_array().ok_or("Invalid Modrinth response")?;
-        let version = requested_version.and_then(|requested| items.iter().find(|item| item["version_number"] == requested))
-            .or_else(|| items.first()).ok_or("No compatible Modrinth version found")?;
-        let file = version["files"].as_array().and_then(|files| files.iter().find(|file| file["primary"] == true).or_else(|| files.first()))
+        let version = requested_version
+            .and_then(|requested| {
+                items
+                    .iter()
+                    .find(|item| item["version_number"] == requested || item["id"] == requested)
+            })
+            .or_else(|| items.first())
+            .ok_or("No compatible Modrinth version found")?;
+        let file = version["files"]
+            .as_array()
+            .and_then(|files| {
+                files
+                    .iter()
+                    .find(|file| file["primary"] == true)
+                    .or_else(|| files.first())
+            })
             .ok_or("No downloadable file found")?;
         return Ok(PluginDownload {
             url: file["url"].as_str().ok_or("Missing download URL")?.into(),
             file_name: file["filename"].as_str().ok_or("Missing filename")?.into(),
-            version: version["version_number"].as_str().unwrap_or("Unknown").into(),
+            version: version["version_number"]
+                .as_str()
+                .unwrap_or("Unknown")
+                .into(),
+            dependencies: version["dependencies"].as_array().into_iter().flatten()
+                .filter(|dependency| dependency["dependency_type"] == "required")
+                .filter_map(|dependency| Some((
+                    dependency["project_id"].as_str()?.to_string(),
+                    dependency["version_id"].as_str().map(str::to_string),
+                ))).collect(),
         });
     }
-    let data: serde_json::Value = client.get(format!("https://hangar.papermc.io/api/v1/projects/{id}/versions"))
-        .query(&[("limit", "100"), ("platform", "PAPER"), ("platformVersion", minecraft)])
-        .send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-        .json().await.map_err(|e| e.to_string())?;
+    let data: serde_json::Value = client
+        .get(format!(
+            "https://hangar.papermc.io/api/v1/projects/{id}/versions"
+        ))
+        .query(&[
+            ("limit", "100"),
+            ("platform", "PAPER"),
+            ("platformVersion", minecraft),
+        ])
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
     let items = data["result"].as_array().ok_or("Invalid Hangar response")?;
-    let version = requested_version.and_then(|requested| items.iter().find(|item| item["name"] == requested))
-        .or_else(|| items.first()).ok_or("No compatible Hangar version found")?;
+    let version = requested_version
+        .and_then(|requested| items.iter().find(|item| item["name"] == requested))
+        .or_else(|| items.first())
+        .ok_or("No compatible Hangar version found")?;
     let download = &version["downloads"]["PAPER"];
     Ok(PluginDownload {
-        url: download["downloadUrl"].as_str().ok_or("This Hangar release uses an external download")?.into(),
-        file_name: download["fileInfo"]["name"].as_str().unwrap_or(&format!("{id}.jar")).to_string(),
+        url: download["downloadUrl"]
+            .as_str()
+            .ok_or("This Hangar release uses an external download")?
+            .into(),
+        file_name: download["fileInfo"]["name"]
+            .as_str()
+            .unwrap_or(&format!("{id}.jar"))
+            .to_string(),
         version: version["name"].as_str().unwrap_or("Unknown").into(),
+        dependencies: Vec::new(),
     })
 }
 
-pub async fn install_plugin(app: &tauri::AppHandle, id: &str, name: &str, server_path: &str, download: PluginDownload, replace: Option<String>, project_type: &str) -> Result<(), String> {
-    if download.file_name.contains(['/', '\\']) { return Err("Invalid plugin filename".into()); }
-    let directory = Path::new(server_path).join("plugins");
+pub async fn install_plugin(
+    app: &tauri::AppHandle,
+    id: &str,
+    name: &str,
+    server_path: &str,
+    download: PluginDownload,
+    replace: Option<String>,
+    project_type: &str,
+) -> Result<(), String> {
+    if download.file_name.contains(['/', '\\']) {
+        return Err("Invalid plugin filename".into());
+    }
+    let directory = Path::new(server_path).join(if project_type == "mod" { "mods" } else { "plugins" });
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-    let mut response = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?
-        .get(&download.url).send().await.and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?;
+    let mut response = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(&download.url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?;
     let total = response.content_length().unwrap_or(0);
     let temporary = directory.join(format!("{}.part", download.file_name));
     let mut file = File::create(&temporary).map_err(|e| e.to_string())?;
@@ -544,28 +877,41 @@ pub async fn install_plugin(app: &tauri::AppHandle, id: &str, name: &str, server
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
         downloaded += chunk.len() as u64;
-        let _ = app.emit("plugin-download-progress", serde_json::json!({
+        let _ = app.emit("install-progress", serde_json::json!({
             "id": id, "name": name, "downloaded": downloaded, "total": total, "state": "downloading"
         }));
     }
     drop(file);
-    let valid_plugin = File::open(&temporary).ok()
+    let valid_plugin = File::open(&temporary)
+        .ok()
         .and_then(|file| zip::ZipArchive::new(file).ok())
         .is_some_and(|mut jar| {
             if project_type == "mod" || project_type == "modpack" {
-                jar.by_name("fabric.mod.json").is_ok() || jar.by_name("quilt.mod.json").is_ok() || jar.by_name("META-INF/mods.toml").is_ok() || jar.by_name("mcmod.info").is_ok()
+                jar.by_name("fabric.mod.json").is_ok()
+                    || jar.by_name("quilt.mod.json").is_ok()
+                    || jar.by_name("META-INF/mods.toml").is_ok()
+                    || jar.by_name("mcmod.info").is_ok()
             } else {
-                jar.by_name("plugin.yml").is_ok() || jar.by_name("paper-plugin.yml").is_ok() || jar.by_name("bungee.yml").is_ok() || jar.by_name("velocity-plugin.json").is_ok()
+                jar.by_name("plugin.yml").is_ok()
+                    || jar.by_name("paper-plugin.yml").is_ok()
+                    || jar.by_name("bungee.yml").is_ok()
+                    || jar.by_name("velocity-plugin.json").is_ok()
             }
         });
     if !valid_plugin {
         let _ = std::fs::remove_file(&temporary);
-        let msg = if project_type == "mod" || project_type == "modpack" { "Downloaded file is not a valid Mod JAR" } else { "Downloaded file is not a valid Plugin JAR" };
+        let msg = if project_type == "mod" || project_type == "modpack" {
+            "Downloaded file is not a valid Mod JAR"
+        } else {
+            "Downloaded file is not a valid Plugin JAR"
+        };
         return Err(msg.into());
     }
     let target = directory.join(&download.file_name);
     if let Some(old) = replace {
-        if old.contains(['/', '\\']) { return Err("Invalid plugin filename".into()); }
+        if old.contains(['/', '\\']) {
+            return Err("Invalid plugin filename".into());
+        }
         let old = directory.join(old);
         if old == target && old.exists() {
             let backup = directory.join(format!("{}.minedock-backup", download.file_name));
@@ -578,7 +924,9 @@ pub async fn install_plugin(app: &tauri::AppHandle, id: &str, name: &str, server
             return Ok(());
         }
         std::fs::rename(&temporary, &target).map_err(|e| e.to_string())?;
-        if old.exists() { std::fs::remove_file(old).map_err(|e| e.to_string())?; }
+        if old.exists() {
+            std::fs::remove_file(old).map_err(|e| e.to_string())?;
+        }
         return Ok(());
     }
     std::fs::rename(temporary, target).map_err(|e| e.to_string())
@@ -595,8 +943,6 @@ mod tests {
         assert_eq!(yaml_value(yaml, "version").as_deref(), Some("1.2.3"));
     }
 }
-
-
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -624,80 +970,155 @@ pub async fn install_modpack(
     project_id: &str,
     version_id: &str,
 ) -> Result<(), String> {
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
-    
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| e.to_string())?;
+
     // 1. Get version details (support both version ID or project+version number)
     let url = format!("https://api.modrinth.com/v2/project/{project_id}/version/{version_id}");
-    let version_info: serde_json::Value = client.get(&url).send().await
-        .and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-        .json().await.map_err(|e| e.to_string())?;
-        
-    let file = version_info["files"].as_array().and_then(|f| f.first()).ok_or("No files found in version")?;
+    let version_info: serde_json::Value = client
+        .get(&url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let file = version_info["files"]
+        .as_array()
+        .and_then(|f| f.first())
+        .ok_or("No files found in version")?;
     let download_url = file["url"].as_str().ok_or("No URL found")?;
-    
+
     // 2. Download the .mrpack file to memory
-    let mrpack_bytes = client.get(download_url).send().await
-        .and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-        .bytes().await.map_err(|e| e.to_string())?;
-        
+    let mrpack_bytes = client
+        .get(download_url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+
     let cursor = std::io::Cursor::new(mrpack_bytes);
     let mut archive = ZipArchive::new(cursor).map_err(|e| format!("Failed to read mrpack: {e}"))?;
-    
+
     // 3. Extract and parse modrinth.index.json
     let index: MrpackIndex = {
-        let index_file = archive.by_name("modrinth.index.json").map_err(|_| "Missing modrinth.index.json".to_string())?;
+        let index_file = archive
+            .by_name("modrinth.index.json")
+            .map_err(|_| "Missing modrinth.index.json".to_string())?;
         serde_json::from_reader(index_file).map_err(|e| format!("Invalid index: {e}"))?
     };
-    
-    let mc_version = index.dependencies.get("minecraft").ok_or("Missing minecraft version in modpack")?;
-    
+
+    let mc_version = index
+        .dependencies
+        .get("minecraft")
+        .ok_or("Missing minecraft version in modpack")?;
+
     // 4. Determine Modloader
     let mut loader_type = "vanilla".to_string();
     let mut loader_version = "".to_string();
-    
+
     if let Some(fabric) = index.dependencies.get("fabric-loader") {
         loader_type = "fabric".to_string();
         loader_version = fabric.clone();
     } else if let Some(quilt) = index.dependencies.get("quilt-loader") {
         loader_type = "quilt".to_string();
         loader_version = quilt.clone();
-    } else if index.dependencies.get("forge").is_some() || index.dependencies.get("neoforge").is_some() {
-        return Err("Forge/NeoForge modpacks are not yet supported by the automated installer. Please install a Fabric or Quilt modpack.".into());
+    } else if let Some(forge) = index.dependencies.get("forge") {
+        loader_type = "forge".to_string();
+        loader_version = forge.clone();
+    } else if let Some(neoforge) = index.dependencies.get("neoforge") {
+        loader_type = "neoforge".to_string();
+        loader_version = neoforge.clone();
     }
-    
+
     // 5. Download Modloader Server Jar if Fabric/Quilt
     if loader_type == "fabric" || loader_type == "quilt" {
-        let domain = if loader_type == "fabric" { "meta.fabricmc.net/v2" } else { "meta.quiltmc.org/v3" };
-        
+        let domain = if loader_type == "fabric" {
+            "meta.fabricmc.net/v2"
+        } else {
+            "meta.quiltmc.org/v3"
+        };
+
         let installer_url = format!("https://{domain}/versions/installer");
-        let installers: serde_json::Value = client.get(&installer_url).send().await
-            .and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
-        
-        let installer_version = installers.as_array()
+        let installers: serde_json::Value = client
+            .get(&installer_url)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let installer_version = installers
+            .as_array()
             .and_then(|arr| arr.first())
             .and_then(|first| first["version"].as_str())
-            .unwrap_or(if loader_type == "fabric" { "1.0.1" } else { "0.9.0" });
+            .unwrap_or(if loader_type == "fabric" {
+                "1.0.1"
+            } else {
+                "0.9.0"
+            });
 
         let jar_url = format!("https://{domain}/versions/loader/{mc_version}/{loader_version}/{installer_version}/server/jar");
-        let jar_bytes = client.get(&jar_url).send().await
-            .and_then(reqwest::Response::error_for_status).map_err(|e| e.to_string())?
-            .bytes().await.map_err(|e| e.to_string())?;
-        std::fs::write(std::path::Path::new(server_path).join("server.jar"), jar_bytes).map_err(|e| format!("Failed to write server.jar: {e}"))?;
-        
+        let jar_bytes = client
+            .get(&jar_url)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|e| e.to_string())?
+            .bytes()
+            .await
+            .map_err(|e| e.to_string())?;
+        std::fs::write(
+            std::path::Path::new(server_path).join("server.jar"),
+            jar_bytes,
+        )
+        .map_err(|e| format!("Failed to write server.jar: {e}"))?;
+
         use tauri::Manager;
         let db_state = app.state::<crate::database::DbState>();
         let conn = db_state.db.lock().map_err(|e| e.to_string())?;
-        crate::database::update_server_type_and_version(&conn, server_id, &loader_type, mc_version, "server.jar")
-            .map_err(|e| format!("Failed to update database: {e}"))?;
+        crate::database::update_server_type_and_version(
+            &conn,
+            server_id,
+            &loader_type,
+            mc_version,
+            "server.jar",
+        )
+        .map_err(|e| format!("Failed to update database: {e}"))?;
+    } else if loader_type == "forge" || loader_type == "neoforge" {
+        use tauri::Manager;
+        let java_path = {
+            let state = app.state::<crate::database::DbState>();
+            let conn = state.db.lock().map_err(|e| e.to_string())?;
+            crate::database::get_server(&conn, server_id)
+                .map_err(|e| e.to_string())?.ok_or("Server not found")?.java_path
+        };
+        let jar_path = crate::downloader::install_mod_loader(
+            app.clone(), loader_type.clone(), mc_version.clone(), server_path.to_string(),
+            java_path, Some(loader_version.clone()),
+        ).await?;
+        let state = app.state::<crate::database::DbState>();
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        crate::database::update_server_type_and_version(
+            &conn, server_id, &loader_type, mc_version, &jar_path,
+        ).map_err(|e| format!("Failed to update database: {e}"))?;
     }
-    
+
     // 6. Download Mod Jars
     let mods_dir = std::path::Path::new(server_path).join("mods");
     std::fs::create_dir_all(&mods_dir).map_err(|e| e.to_string())?;
-    
+
     let mut tasks = tokio::task::JoinSet::new();
-    
+
     for file in index.files {
         if let Some(env) = &file.env {
             if env.server.as_deref() == Some("unsupported") {
@@ -705,48 +1126,55 @@ pub async fn install_modpack(
             }
         }
         if let Some(url) = file.downloads.first().cloned() {
-            let path = std::path::Path::new(server_path).join(&file.path);
+            let relative = std::path::Path::new(&file.path);
+            if relative.is_absolute() || relative.components().any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::Prefix(_) | std::path::Component::RootDir)) {
+                return Err("Modpack contains an unsafe file path".into());
+            }
+            let path = std::path::Path::new(server_path).join(relative);
             let c = client.clone();
             tasks.spawn(async move {
                 if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
-                if let Ok(res) = c.get(&url).send().await.and_then(|r| r.error_for_status()) {
-                    if let Ok(bytes) = res.bytes().await {
-                        let _ = std::fs::write(&path, bytes);
-                    }
-                }
+                let bytes = c.get(&url).send().await.and_then(|r| r.error_for_status())
+                    .map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
+                std::fs::write(&path, bytes).map_err(|e| e.to_string())
             });
         }
     }
-    
+
     while let Some(res) = tasks.join_next().await {
-        if let Err(e) = res {
-            println!("Failed to download mod: {}", e);
-        }
+        res.map_err(|e| e.to_string())??;
     }
-    
+
     // 7. Extract overrides
     let server_path_obj = std::path::Path::new(server_path);
     for i in 0..archive.len() {
         if let Ok(mut file) = archive.by_index(i) {
             let name = file.name().to_string();
             if name.starts_with("overrides/") || name.starts_with("server-overrides/") {
-                let strip_prefix = if name.starts_with("overrides/") { "overrides/" } else { "server-overrides/" };
-                let target_path = server_path_obj.join(name.strip_prefix(strip_prefix).unwrap());
+                let strip_prefix = if name.starts_with("overrides/") {
+                    "overrides/"
+                } else {
+                    "server-overrides/"
+                };
+                let relative = Path::new(name.strip_prefix(strip_prefix).unwrap());
+                if relative.components().any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::Prefix(_) | std::path::Component::RootDir)) {
+                    return Err("Modpack contains an unsafe override path".into());
+                }
+                let target_path = server_path_obj.join(relative);
                 if file.is_dir() {
-                    let _ = std::fs::create_dir_all(&target_path);
+                    std::fs::create_dir_all(&target_path).map_err(|e| e.to_string())?;
                 } else {
                     if let Some(parent) = target_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                     }
-                    if let Ok(mut out) = std::fs::File::create(&target_path) {
-                        let _ = std::io::copy(&mut file, &mut out);
-                    }
+                    let mut out = std::fs::File::create(&target_path).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut file, &mut out).map_err(|e| e.to_string())?;
                 }
             }
         }
     }
-    
+
     Ok(())
 }

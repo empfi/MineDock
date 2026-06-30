@@ -38,7 +38,7 @@ interface AppState {
   updateServerStatus: (id: number, status: string) => void;
   appendConsoleLog: (id: number, text: string, isError: boolean) => void;
   clearConsoleLogs: (id: number) => void;
-  createBackup: (id: number, path: string) => Promise<void>;
+  createBackup: (id: number, path: string, customName?: string) => Promise<void>;
   restoreBackup: (id: number, path: string, name: string) => Promise<void>;
   deleteBackup: (id: number, path: string, name: string) => Promise<void>;
   versionsCache: Record<string, string[]>;
@@ -46,6 +46,7 @@ interface AppState {
   clearVersionsCache: () => void;
   serverStats: Record<number, PerformanceTick[]>;
   onlinePlayers: Record<number, string[]>;
+  playerHistory: Record<number, { player: string; action: 'joined' | 'left'; timestamp: string }[]>;
   addServerStats: (id: number, cpu: number, memory: number) => void;
   addOnlinePlayer: (id: number, player: string) => void;
   removeOnlinePlayer: (id: number, player: string) => void;
@@ -63,6 +64,7 @@ export const useStore = create<AppState>((set, get) => ({
   versionsCache: {},
   serverStats: {},
   onlinePlayers: {},
+  playerHistory: {},
 
   addServerStats: (id, cpu, memory) => set((state) => {
     const ticks = state.serverStats[id] || [];
@@ -86,7 +88,11 @@ export const useStore = create<AppState>((set, get) => ({
       onlinePlayers: {
         ...state.onlinePlayers,
         [id]: [...list, player],
-      }
+      },
+      playerHistory: {
+        ...state.playerHistory,
+        [id]: [...(state.playerHistory[id] || []), { player, action: 'joined' as const, timestamp: new Date().toLocaleTimeString() }].slice(-20),
+      },
     };
   }),
 
@@ -96,7 +102,11 @@ export const useStore = create<AppState>((set, get) => ({
       onlinePlayers: {
         ...state.onlinePlayers,
         [id]: list.filter(p => p !== player),
-      }
+      },
+      playerHistory: {
+        ...state.playerHistory,
+        [id]: [...(state.playerHistory[id] || []), { player, action: 'left' as const, timestamp: new Date().toLocaleTimeString() }].slice(-20),
+      },
     };
   }),
 
@@ -177,10 +187,10 @@ export const useStore = create<AppState>((set, get) => ({
     return { consoleLogs };
   }),
 
-  createBackup: async (id, path) => {
+  createBackup: async (id, path, customName) => {
     set((state) => ({ backupJobs: { ...state.backupJobs, [id]: 'Creating backup...' } }));
     try {
-      const name = `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+      const name = customName?.trim() || `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`;
       await invoke('create_mc_backup', { serverPath: path, backupName: name });
     } finally {
       set((state) => ({

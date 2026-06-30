@@ -276,7 +276,9 @@ export default function Files() {
             <button
               onClick={saveFile}
               disabled={saving || editingFile.content === editingFile.originalContent}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm transition-colors disabled:opacity-50"
+              title={editingFile.content === editingFile.originalContent ? 'No unsaved changes' : saving ? 'Saving file' : 'Save file'}
+              className="action-button bg-blue-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+              style={{ '--action-width': '7rem' } as React.CSSProperties}
             >
               <Save size={14} /> {saving ? 'Saving...' : 'Save File'}
             </button>

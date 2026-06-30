@@ -6,13 +6,20 @@ type Notification = { id: number; message: string; type: NotificationType; creat
 
 let notifications: Notification[] = [];
 let history: Notification[] = JSON.parse(localStorage.getItem('minedock-notifications') || '[]');
+let unread = localStorage.getItem('minedock-notifications-unread') === 'true';
 let nextId = Date.now();
 const listeners = new Set<(items: Notification[]) => void>();
 const historyListeners = new Set<(items: Notification[]) => void>();
+const unreadListeners = new Set<(value: boolean) => void>();
 const publish = () => listeners.forEach(listener => listener([...notifications]));
 const publishHistory = () => {
   localStorage.setItem('minedock-notifications', JSON.stringify(history.slice(0, 100)));
   historyListeners.forEach(listener => listener([...history]));
+};
+const setUnread = (value: boolean) => {
+  unread = value;
+  localStorage.setItem('minedock-notifications-unread', String(value));
+  unreadListeners.forEach(listener => listener(value));
 };
 const dismiss = (id: number) => {
   notifications = notifications.map(item => item.id === id ? { ...item, exiting: true } : item);
@@ -30,6 +37,7 @@ export function notify(message: string, type: NotificationType = 'info', saveToH
   if (saveToHistory) {
     history = [item, ...history].slice(0, 100);
     publishHistory();
+    setUnread(true);
   }
   publish();
   window.setTimeout(() => dismiss(id), 4320);
@@ -38,10 +46,15 @@ export function notify(message: string, type: NotificationType = 'info', saveToH
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState(history);
+  const [hasUnread, setHasUnread] = useState(unread);
   const centerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     historyListeners.add(setItems);
-    return () => { historyListeners.delete(setItems); };
+    unreadListeners.add(setHasUnread);
+    return () => {
+      historyListeners.delete(setItems);
+      unreadListeners.delete(setHasUnread);
+    };
   }, []);
   useEffect(() => {
     if (!open) return;
@@ -52,10 +65,14 @@ export function NotificationCenter() {
     return () => document.removeEventListener('pointerdown', close);
   }, [open]);
   return <div ref={centerRef} className="relative">
-    <button onClick={() => setOpen(value => !value)} title="Notifications" className="relative flex h-10 w-11 items-center justify-center text-gray-400 hover:bg-[#202124] hover:text-white"><Bell size={16} />{items.length > 0 && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-500" />}</button>
+    <button onClick={() => setOpen(value => {
+      const next = !value;
+      if (next) setUnread(false);
+      return next;
+    })} title="Notifications" className="relative flex h-10 w-11 items-center justify-center text-gray-400 hover:bg-[#202124] hover:text-white"><Bell size={16} />{hasUnread && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-500" />}</button>
     {open && <div className="fixed right-3 top-11 z-[110] w-96 overflow-hidden rounded-lg border border-[#2a2b2f] bg-[#1c1d21] shadow-2xl">
       <div className="flex items-center justify-between border-b border-[#2a2b2f] px-4 py-3"><span className="font-semibold text-white">Notifications</span><button onClick={() => { history = []; publishHistory(); }} className="text-gray-600 hover:text-red-400"><Trash2 size={15} /></button></div>
-      <div className="max-h-96 overflow-y-auto">{items.length ? items.map(item => <div key={item.id} className="border-b border-[#25262a] px-4 py-3"><div className="text-sm text-gray-200">{item.message}</div><div className="mt-1 text-xs text-gray-600">{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</div></div>) : <div className="py-12 text-center text-sm text-gray-600">No notifications.</div>}</div>
+      <div className="max-h-96 overflow-y-auto">{items.length ? items.map(item => <div key={item.id} className="border-b border-[#25262a] px-4 py-3 select-text"><div className="text-sm text-gray-200 break-all">{item.message}</div><div className="mt-1 text-xs text-gray-600">{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</div></div>) : <div className="py-12 text-center text-sm text-gray-600">No notifications.</div>}</div>
     </div>}
   </div>;
 }
@@ -75,9 +92,9 @@ export default function Notifications() {
       {items.map(item => {
         const Icon = icons[item.type];
         return (
-          <div key={item.id} className={`app-notification ${item.exiting ? 'is-exiting' : ''} pointer-events-auto flex items-start gap-3 rounded-lg border border-[#34353a] bg-[#1c1d21] p-4 shadow-2xl`}>
+          <div key={item.id} className={`app-notification ${item.exiting ? 'is-exiting' : ''} pointer-events-auto flex items-start gap-3 rounded-lg border border-[#34353a] bg-[#1c1d21] p-4 shadow-2xl select-text`}>
             <Icon size={18} className={`${colors[item.type]} mt-0.5 shrink-0`} />
-            <p className="flex-1 text-sm text-gray-200">{item.message}</p>
+            <p className="flex-1 text-sm text-gray-200 break-all">{item.message}</p>
             <button onClick={() => dismiss(item.id)} aria-label="Dismiss notification" className="text-gray-500 hover:text-white">
               <X size={16} />
             </button>

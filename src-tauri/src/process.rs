@@ -1,11 +1,13 @@
+use crate::database::{
+    get_server, get_settings, update_server_last_started, update_server_status, DbState,
+};
+use crate::files::apply_pending_deletes;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
-use tokio::io::{AsyncBufReadExt, BufReader, AsyncWriteExt};
-use tauri::{AppHandle, Manager, Emitter};
-use crate::database::{DbState, update_server_status, update_server_last_started, get_server, get_settings};
-use crate::files::apply_pending_deletes;
+use tokio::sync::Mutex;
 
 #[derive(Clone, serde::Serialize)]
 struct ConsoleLine {
@@ -27,59 +29,108 @@ pub struct ProcessManager {
 }
 
 fn required_java_version(minecraft: &str) -> u32 {
-    let mut parts = minecraft.split('.').filter_map(|part| part.parse::<u32>().ok());
-    let major = parts.next().unwrap_or(1);
-    let minor = parts.next().unwrap_or(0);
-    let patch = parts.next().unwrap_or(0);
-    if (major, minor, patch) >= (1, 20, 5) { 21 }
-    else if (major, minor, patch) >= (1, 18, 0) { 17 }
-    else if (major, minor, patch) >= (1, 17, 0) { 16 }
-    else { 8 }
+    let mut parts = minecraft.split('.').map(|part| {
+        part.chars()
+            .take_while(|character| character.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .ok()
+    });
+    let Some(major) = parts.next().flatten() else {
+        return 21;
+    };
+    if major != 1 {
+        return 21;
+    }
+    let minor = parts.next().flatten().unwrap_or(0);
+    let patch = parts.next().flatten().unwrap_or(0);
+    if (major, minor, patch) >= (1, 20, 5) {
+        21
+    } else if (major, minor, patch) >= (1, 18, 0) {
+        17
+    } else if (major, minor, patch) >= (1, 17, 0) {
+        16
+    } else {
+        8
+    }
 }
 
-fn java_major(java_path: &str) -> Result<u32, String> {
-    let output = std::process::Command::new(java_path).arg("-version").output()
+pub(crate) fn java_major(java_path: &str) -> Result<u32, String> {
+    let output = std::process::Command::new(java_path)
+        .arg("-version")
+        .output()
         .map_err(|e| format!("Could not run Java: {e}"))?;
     let text = String::from_utf8_lossy(&output.stderr);
-    let version = text.split('"').nth(1).ok_or("Could not detect Java version")?;
-    let first = version.split('.').next().and_then(|value| value.parse::<u32>().ok()).ok_or("Invalid Java version")?;
+    let version = text
+        .split('"')
+        .nth(1)
+        .ok_or("Could not detect Java version")?;
+    let first = version
+        .split('.')
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("Invalid Java version")?;
     if first == 1 {
-        version.split('.').nth(1).and_then(|value| value.parse().ok()).ok_or("Invalid Java version".to_string())
+        version
+            .split('.')
+            .nth(1)
+            .and_then(|value| value.parse().ok())
+            .ok_or("Invalid Java version".to_string())
     } else {
         Ok(first)
     }
 }
 
+fn is_server_ready(line: &str) -> bool {
+    line.to_ascii_lowercase().contains("done (")
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::is_server_ready;
+
+    #[test]
+    fn detects_minecraft_ready_line_only() {
+        assert!(is_server_ready(
+            "[Server thread/INFO]: Done (12.34s)! For help, type \"help\""
+        ));
+        assert!(!is_server_ready(
+            "[ReobfServer] Done remapping server in 3366ms."
+        ));
+    }
+}
+
 impl ProcessManager {
     pub fn new(app: AppHandle) -> Self {
-        let processes: Arc<Mutex<HashMap<i64, ActiveProcessInfo>>> = Arc::new(Mutex::new(HashMap::new()));
-        
+        let processes: Arc<Mutex<HashMap<i64, ActiveProcessInfo>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
         // Spawn stats monitoring task using Tauri's managed runtime (safe to call before full tokio init)
         let processes_clone = processes.clone();
         let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
-            use sysinfo::{System, Pid};
+            use sysinfo::{Pid, System};
             let mut sys = System::new_all();
-            
+
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                
+
                 let active_targets: Vec<(i64, u32)> = {
                     let lock = processes_clone.lock().await;
                     lock.iter().map(|(&sid, info)| (sid, info.pid)).collect()
                 };
-                
+
                 if active_targets.is_empty() {
                     continue;
                 }
-                
+
                 sys.refresh_all();
-                
+
                 for (server_id, pid) in active_targets {
                     if let Some(process) = sys.process(Pid::from(pid as usize)) {
                         let cpu = process.cpu_usage();
                         let memory = process.memory() / 1024 / 1024; // MB
-                        
+
                         let _ = app_clone.emit("server-stats", (server_id, cpu, memory));
                     }
                 }
@@ -105,7 +156,10 @@ impl ProcessManager {
         let required = required_java_version(&server.minecraft_version);
         let installed = java_major(&server.java_path)?;
         if installed < required {
-            return Err(format!("Minecraft {} requires Java {} or newer, but {} uses Java {}", server.minecraft_version, required, server.java_path, installed));
+            return Err(format!(
+                "Minecraft {} requires Java {} or newer, but {} uses Java {}",
+                server.minecraft_version, required, server.java_path, installed
+            ));
         }
 
         // 2. Check if already running
@@ -122,8 +176,9 @@ impl ProcessManager {
             let now = chrono::Local::now().to_rfc3339();
             update_server_last_started(&conn, server_id, &now).map_err(|e| e.to_string())?;
         }
-        self.app.emit("server-status-changed", (server_id, "starting")).unwrap_or_default();
-
+        self.app
+            .emit("server-status-changed", (server_id, "starting"))
+            .unwrap_or_default();
 
         // Verify folder and jar file exist
         let install_path = std::path::Path::new(&server.install_path);
@@ -134,7 +189,9 @@ impl ProcessManager {
                     let _ = update_server_status(&conn, server_id, "offline");
                 }
             }
-            self.app.emit("server-status-changed", (server_id, "offline")).unwrap_or_default();
+            self.app
+                .emit("server-status-changed", (server_id, "offline"))
+                .unwrap_or_default();
             return Err("Server installation directory does not exist! Please restore the directory or delete the server profile.".to_string());
         }
         apply_pending_deletes(&server.install_path);
@@ -145,17 +202,27 @@ impl ProcessManager {
                     let _ = update_server_status(&conn, server_id, "offline");
                 }
             }
-            self.app.emit("server-status-changed", (server_id, "offline")).unwrap_or_default();
-            return Err(format!("Server jar file ({}) does not exist in the installation directory!", server.jar_path));
+            self.app
+                .emit("server-status-changed", (server_id, "offline"))
+                .unwrap_or_default();
+            return Err(format!(
+                "Server jar file ({}) does not exist in the installation directory!",
+                server.jar_path
+            ));
         }
 
         // 4. Spawn process
-        let mut child = Command::new(&server.java_path)
+        let mut command = Command::new(&server.java_path);
+        command
             .current_dir(&server.install_path)
             .arg(format!("-Xms{}M", server.ram_min))
-            .arg(format!("-Xmx{}M", server.ram_max))
-            .arg("-jar")
-            .arg(&server.jar_path)
+            .arg(format!("-Xmx{}M", server.ram_max));
+        if server.jar_path.starts_with('@') {
+            command.arg(&server.jar_path);
+        } else {
+            command.arg("-jar").arg(&server.jar_path);
+        }
+        let mut child = command
             .arg("nogui")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -171,30 +238,36 @@ impl ProcessManager {
         processes.insert(server_id, ActiveProcessInfo { stdin, pid });
         drop(processes); // Drop lock before entering wait state
 
-        // Update status to online (we could be smarter about this by parsing logs)
-        {
-            let state = self.app.state::<DbState>();
-            let conn = state.db.lock();
-            if let Ok(conn) = conn {
-                let _ = update_server_status(&conn, server_id, "online");
-            }
-        }
-        self.app.emit("server-status-changed", (server_id, "online")).unwrap_or_default();
-
-
         // 5. Stream logs
         let app_clone1 = self.app.clone();
         let app_clone2 = self.app.clone();
-        
+
         let stdout_reader = BufReader::new(stdout);
         let mut stdout_lines = stdout_reader.lines();
         tokio::spawn(async move {
+            let mut ready = false;
             while let Ok(Some(line)) = stdout_lines.next_line().await {
-                app_clone1.emit("console-log", ConsoleLine {
-                    server_id,
-                    line,
-                    is_error: false,
-                }).unwrap_or_default();
+                if !ready && is_server_ready(&line) {
+                    ready = true;
+                    if let Some(state) = app_clone1.try_state::<DbState>() {
+                        if let Ok(conn) = state.db.lock() {
+                            let _ = update_server_status(&conn, server_id, "online");
+                        }
+                    }
+                    app_clone1
+                        .emit("server-status-changed", (server_id, "online"))
+                        .unwrap_or_default();
+                }
+                app_clone1
+                    .emit(
+                        "console-log",
+                        ConsoleLine {
+                            server_id,
+                            line,
+                            is_error: false,
+                        },
+                    )
+                    .unwrap_or_default();
             }
         });
 
@@ -202,11 +275,16 @@ impl ProcessManager {
         let mut stderr_lines = stderr_reader.lines();
         tokio::spawn(async move {
             while let Ok(Some(line)) = stderr_lines.next_line().await {
-                app_clone2.emit("console-log", ConsoleLine {
-                    server_id,
-                    line,
-                    is_error: true,
-                }).unwrap_or_default();
+                app_clone2
+                    .emit(
+                        "console-log",
+                        ConsoleLine {
+                            server_id,
+                            line,
+                            is_error: true,
+                        },
+                    )
+                    .unwrap_or_default();
             }
         });
 
@@ -222,13 +300,24 @@ impl ProcessManager {
                     let conn = state.db.lock();
                     let mut restart = false;
                     if let Ok(conn) = conn {
-                        let intentional = get_server(&conn, server_id).ok().flatten()
+                        let intentional = get_server(&conn, server_id)
+                            .ok()
+                            .flatten()
                             .is_some_and(|server| server.status == "stopping");
-                        restart = !status.success() && !intentional
+                        restart = !status.success()
+                            && !intentional
                             && get_settings(&conn).is_ok_and(|settings| settings.auto_restart);
-                        let new_status = if restart { "restarting" } else if status.success() || intentional { "offline" } else { "crashed" };
+                        let new_status = if restart {
+                            "restarting"
+                        } else if status.success() || intentional {
+                            "offline"
+                        } else {
+                            "crashed"
+                        };
                         let _ = update_server_status(&conn, server_id, new_status);
-                        app_clone.emit("server-status-changed", (server_id, new_status)).unwrap_or_default();
+                        app_clone
+                            .emit("server-status-changed", (server_id, new_status))
+                            .unwrap_or_default();
                     }
                     restart
                 };
@@ -236,7 +325,9 @@ impl ProcessManager {
                     let mut history = crash_history.lock().await;
                     let crashes = history.entry(server_id).or_default();
                     let cutoff = std::time::Instant::now() - std::time::Duration::from_secs(60);
-                    while crashes.front().is_some_and(|time| *time < cutoff) { crashes.pop_front(); }
+                    while crashes.front().is_some_and(|time| *time < cutoff) {
+                        crashes.pop_front();
+                    }
                     crashes.push_back(std::time::Instant::now());
                     if crashes.len() > 3 {
                         restart = false;
@@ -245,7 +336,9 @@ impl ProcessManager {
                                 let _ = update_server_status(&conn, server_id, "crash-loop");
                             }
                         }
-                        app_clone.emit("server-status-changed", (server_id, "crash-loop")).unwrap_or_default();
+                        app_clone
+                            .emit("server-status-changed", (server_id, "crash-loop"))
+                            .unwrap_or_default();
                         app_clone.emit("console-log", ConsoleLine {
                             server_id,
                             line: "Auto-restart stopped: server crashed more than 3 times in 60 seconds.".into(),
@@ -257,7 +350,9 @@ impl ProcessManager {
                 processes_clone.lock().await.remove(&server_id);
                 if restart {
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                    app_clone.emit("server-auto-restart", server_id).unwrap_or_default();
+                    app_clone
+                        .emit("server-auto-restart", server_id)
+                        .unwrap_or_default();
                 }
             } else {
                 processes_clone.lock().await.remove(&server_id);
@@ -271,12 +366,17 @@ impl ProcessManager {
         let stop_command = {
             let state = self.app.state::<DbState>();
             let conn = state.db.lock().map_err(|_| "Failed to lock database")?;
-            let server = get_server(&conn, server_id).map_err(|e| e.to_string())?.ok_or("Server not found")?;
-            if server.server_type == "velocity" { b"end\n".as_slice() } else { b"stop\n".as_slice() }
+            let server = get_server(&conn, server_id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Server not found")?;
+            if server.server_type == "velocity" {
+                b"end\n".as_slice()
+            } else {
+                b"stop\n".as_slice()
+            }
         };
         let mut processes = self.processes.lock().await;
         if let Some(info) = processes.get_mut(&server_id) {
-            
             {
                 let state = self.app.state::<DbState>();
                 let conn = state.db.lock();
@@ -284,11 +384,46 @@ impl ProcessManager {
                     let _ = update_server_status(&conn, server_id, "stopping");
                 }
             }
-            self.app.emit("server-status-changed", (server_id, "stopping")).unwrap_or_default();
+            self.app
+                .emit("server-status-changed", (server_id, "stopping"))
+                .unwrap_or_default();
 
             let _ = info.stdin.write_all(stop_command).await;
             let _ = info.stdin.flush().await;
-            
+        } else {
+            return Err("Server not running".to_string());
+        }
+        Ok(())
+    }
+
+    pub async fn kill_server(&self, server_id: i64) -> Result<(), String> {
+        let processes = self.processes.lock().await;
+        if let Some(info) = processes.get(&server_id) {
+            let pid = info.pid;
+
+            {
+                let state = self.app.state::<DbState>();
+                let conn = state.db.lock();
+                if let Ok(conn) = conn {
+                    let _ = update_server_status(&conn, server_id, "stopping");
+                }
+            }
+            self.app
+                .emit("server-status-changed", (server_id, "stopping"))
+                .unwrap_or_default();
+
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(&["/F", "/PID", &pid.to_string()])
+                    .spawn();
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = std::process::Command::new("kill")
+                    .args(&["-9", &pid.to_string()])
+                    .spawn();
+            }
         } else {
             return Err("Server not running".to_string());
         }
@@ -299,7 +434,10 @@ impl ProcessManager {
         let mut processes = self.processes.lock().await;
         if let Some(info) = processes.get_mut(&server_id) {
             let cmd = format!("{}\n", command);
-            info.stdin.write_all(cmd.as_bytes()).await.map_err(|e| e.to_string())?;
+            info.stdin
+                .write_all(cmd.as_bytes())
+                .await
+                .map_err(|e| e.to_string())?;
             info.stdin.flush().await.map_err(|e| e.to_string())?;
         } else {
             return Err("Server not running".to_string());
@@ -318,6 +456,9 @@ mod tests {
         assert_eq!(required_java_version("1.17.1"), 16);
         assert_eq!(required_java_version("1.20.4"), 17);
         assert_eq!(required_java_version("1.20.5"), 21);
+        assert_eq!(required_java_version("1.20.5-rc1"), 21);
         assert_eq!(required_java_version("1.21.11"), 21);
+        assert_eq!(required_java_version("latest"), 21);
+        assert_eq!(required_java_version("3.4.0"), 21);
     }
 }

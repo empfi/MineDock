@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
 import { notify } from '../components/Notifications';
 import { Folder, Loader2, PlugZap } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
 import { AppSettings } from '../types';
 import UnsavedChangesBar from '../components/UnsavedChangesBar';
 
@@ -11,6 +12,7 @@ export default function SettingsPage() {
   const [localSettings, setLocalSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [testingRelay, setTestingRelay] = useState(false);
+  const [backupBeforeInstall, setBackupBeforeInstall] = useState(localStorage.getItem('minedock:backup_before_install') === 'true');
 
   useEffect(() => {
     if (settings) {
@@ -23,6 +25,7 @@ export default function SettingsPage() {
     if (errors.length) return;
     setSaving(true);
     try {
+      localStorage.setItem('minedock:backup_before_install', String(backupBeforeInstall));
       await invoke('save_settings', { settings: localSettings });
       await fetchSettings();
       notify('Settings saved.', 'success', false);
@@ -33,7 +36,11 @@ export default function SettingsPage() {
     }
   };
 
-  const dirty = Boolean(settings && localSettings && JSON.stringify(settings) !== JSON.stringify(localSettings));
+  const backupSettingStored = localStorage.getItem('minedock:backup_before_install') === 'true';
+  const dirty = Boolean(
+    (settings && localSettings && JSON.stringify(settings) !== JSON.stringify(localSettings)) ||
+    (backupBeforeInstall !== backupSettingStored)
+  );
   const errors = localSettings ? [
     ...(localSettings.default_ram_min > localSettings.default_ram_max ? ['Minimum RAM cannot exceed maximum RAM.'] : []),
     ...(localSettings.tunnel_enabled && !/^[^:]+:\d+$/.test(localSettings.tunnel_relay) ? ['Relay address must use host:port format.'] : []),
@@ -78,12 +85,7 @@ export default function SettingsPage() {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 w-full">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Settings</h1>
-          <p className="text-gray-400">Configure global MineDock application settings.</p>
-        </div>
-      </div>
+      <PageHeader title="Settings" description="Configure global MineDock application settings." />
 
       <div className="space-y-6">
         {errors.length > 0 && (
@@ -108,7 +110,8 @@ export default function SettingsPage() {
                   placeholder="e.g. C:\MineDock\Servers"
                 />
                 <button
-                  onClick={selectDir}
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); selectDir(); }}
                   className="px-4 py-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white rounded-md transition-colors flex items-center gap-2"
                 >
                   <Folder size={18} />
@@ -206,7 +209,9 @@ export default function SettingsPage() {
             <button
               onClick={testRelay}
               disabled={!localSettings.tunnel_enabled || testingRelay || errors.some(error => error.startsWith('Relay'))}
-              className="flex items-center gap-2 rounded-md bg-[#2a2b2f] px-3 py-2 text-sm text-white hover:bg-[#3a3b3f] disabled:opacity-40"
+              title={!localSettings.tunnel_enabled ? 'Enable public sharing first' : errors.some(error => error.startsWith('Relay')) ? 'Fix relay settings before testing' : testingRelay ? 'Testing relay connection' : 'Test relay connection'}
+              className="action-button bg-[#2a2b2f] px-3 py-2 text-sm text-white hover:bg-[#3a3b3f] disabled:opacity-40"
+              style={{ '--action-width': '11.5rem' } as React.CSSProperties}
             >
               {testingRelay ? <Loader2 size={16} className="animate-spin" /> : <PlugZap size={16} />}
               {testingRelay ? 'Testing relay...' : 'Test relay connection'}
@@ -221,8 +226,8 @@ export default function SettingsPage() {
           <div className="p-6 space-y-4">
             
             <label className="flex items-center gap-3 cursor-pointer">
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 checked={localSettings.confirm_stop}
                 onChange={(e) => setLocalSettings({...localSettings, confirm_stop: e.target.checked})}
                 className="w-5 h-5 rounded border-[#2a2b2f] bg-[#0f0f11] text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900"
@@ -231,8 +236,8 @@ export default function SettingsPage() {
             </label>
 
             <label className="flex items-center gap-3 cursor-pointer">
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 checked={localSettings.confirm_delete}
                 onChange={(e) => setLocalSettings({...localSettings, confirm_delete: e.target.checked})}
                 className="w-5 h-5 rounded border-[#2a2b2f] bg-[#0f0f11] text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900"
@@ -250,6 +255,18 @@ export default function SettingsPage() {
               <span className="text-gray-300">Auto-scroll console by default</span>
             </label>
 
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={backupBeforeInstall}
+                onChange={(e) => {
+                  setBackupBeforeInstall(e.target.checked);
+                }}
+                className="w-5 h-5 rounded border-[#2a2b2f] bg-[#0f0f11] text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900"
+              />
+              <span className="text-gray-300">Create restore points before plugin/software installations</span>
+            </label>
+
           </div>
         </div>
       </div>
@@ -257,7 +274,10 @@ export default function SettingsPage() {
         dirty={dirty}
         saving={saving}
         onSave={handleSave}
-        onReset={() => settings && setLocalSettings({...settings})}
+        onReset={() => {
+          if (settings) setLocalSettings({...settings});
+          setBackupBeforeInstall(localStorage.getItem('minedock:backup_before_install') === 'true');
+        }}
         saveDisabled={errors.length > 0}
       />
     </div>

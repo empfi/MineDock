@@ -3,15 +3,35 @@ import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ChevronRight, ChevronLeft, Check, Folder, Loader2, Box } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Check, Folder, Loader2 } from 'lucide-react';
 import { Server } from '../types';
+import PageHeader from '../components/PageHeader';
+import { reportInstall } from '../components/ProgressHub';
+import { SOFTWARE } from '../lib/software';
 
-const SOFTWARE = [
-  { id: 'vanilla', name: 'Vanilla', description: 'Official Minecraft server', icon: undefined },
-  { id: 'paper', name: 'Paper', description: 'Fast plugin server', icon: '/software/paper.svg' },
-  { id: 'purpur', name: 'Purpur', description: 'Configurable Paper fork', icon: '/software/purpur.svg' },
-  { id: 'velocity', name: 'Velocity', description: 'Modern proxy server', icon: '/software/velocity.svg' },
+const TUTORIAL = [
+  '',
+  'Choose a recognizable server name, then click Next.',
+  'Choose an absolute Windows installation path or use Browse, then click Next.',
+  'Select the server fork and Minecraft version, then click Next.',
+  'Set minimum and maximum RAM within your available system memory, then click Next.',
+  'Choose the network port players will use, then click Next.',
+  'Select a detected Java installation or enter its executable path, then click Next.',
+  'Review and accept the Minecraft EULA, then install the server.',
 ] as const;
+
+function requiredJavaMajor(version: string, serverType: string) {
+  if (serverType === 'velocity') return 21;
+  const match = version.match(/^1\.(\d+)(?:\.(\d+))?/);
+  if (!match) return 21;
+  const minor = Number(match[1]);
+  const patch = Number(match[2] || 0);
+  if (minor > 20 || (minor === 20 && patch >= 5)) return 21;
+  if (minor >= 18) return 17;
+  if (minor >= 17) return 16;
+  return 8;
+}
+
 export default function Wizard() {
   const navigate = useNavigate();
   const { servers, settings, fetchServers, getSoftwareVersionsCached, clearVersionsCache, fetchSettings } = useStore();
@@ -38,6 +58,8 @@ export default function Wizard() {
   const [versions, setVersions] = useState<string[]>([]);
   const [sysMemory, setSysMemory] = useState<number>(8192);
   const [detectedJavas, setDetectedJavas] = useState<string[]>([]);
+  const [installingJava, setInstallingJava] = useState(false);
+  const [selectedJavaMajor, setSelectedJavaMajor] = useState<number | null>(null);
 
   // Install State
   const [installStatus, setInstallStatus] = useState('');
@@ -76,9 +98,7 @@ export default function Wizard() {
       invoke<string[]>('detect_java_paths')
         .then(paths => {
            setDetectedJavas(paths);
-           if (paths.length > 0 && javaPath === 'java') {
-             setJavaPath(paths[paths.length - 1]); // Try to pick the most specific/highest version
-           }
+           if (paths.length > 0 && javaPath === 'java') setJavaPath(paths[paths.length - 1]);
         })
         .catch(console.error)
         .finally(() => setLoading(false));
@@ -98,6 +118,37 @@ export default function Wizard() {
     }
   };
 
+  const managedJavaMajor = requiredJavaMajor(version, serverType);
+  const javaCompatible = selectedJavaMajor !== null && selectedJavaMajor >= managedJavaMajor;
+
+  useEffect(() => {
+    let active = true;
+    setSelectedJavaMajor(null);
+    if (!javaPath.trim()) return () => { active = false; };
+    invoke<number>('get_java_major', { path: javaPath })
+      .then(major => { if (active) setSelectedJavaMajor(major); })
+      .catch(() => { if (active) setSelectedJavaMajor(null); });
+    return () => { active = false; };
+  }, [javaPath]);
+
+  const installJava = async () => {
+    const id = `java-${managedJavaMajor}`;
+    reportInstall({ id, name: `Java ${managedJavaMajor}`, state: 'downloading' });
+    setInstallingJava(true);
+    setError(null);
+    try {
+      const path = await invoke<string>('install_managed_java', { major: managedJavaMajor });
+      setJavaPath(path);
+      setDetectedJavas(current => current.includes(path) ? current : [...current, path]);
+      reportInstall({ id, name: `Java ${managedJavaMajor}`, state: 'done' });
+    } catch (error) {
+      reportInstall({ id, name: `Java ${managedJavaMajor}`, state: 'failed' });
+      setError(String(error));
+    } finally {
+      setInstallingJava(false);
+    }
+  };
+
   const handleInstall = async () => {
     if (serverType !== 'velocity' && !eulaAccepted) {
       setError('You must accept the EULA to install the server.');
@@ -105,6 +156,8 @@ export default function Wizard() {
     }
 
     setStep(8);
+    const installId = `server-${Date.now()}`;
+    reportInstall({ id: installId, name: `${serverType} ${version}`, state: 'downloading' });
     setInstallStatus('Creating folders...');
     
     try {
@@ -113,15 +166,20 @@ export default function Wizard() {
       
       // 2. Download jar
       setInstallStatus('Downloading server jar...');
-      const jarName = 'server.jar';
+      let jarName = 'server.jar';
       const jarPath = `${installPath}\\${jarName}`;
       
       const unlisten = await listen<{downloaded: number, total: number}>('download-progress', (event) => {
         const { downloaded, total } = event.payload;
         setDownloadProgress((downloaded / total) * 100);
+        reportInstall({ id: installId, name: `${serverType} ${version}`, downloaded, total, state: 'downloading' });
       });
 
-      await invoke('download_software', { serverType, version, path: jarPath });
+      if (['fabric', 'forge', 'neoforge'].includes(serverType)) {
+        jarName = await invoke<string>('install_loader', { serverType, version, serverPath: installPath, javaPath });
+      } else {
+        await invoke('download_software', { serverType, version, path: jarPath });
+      }
       unlisten();
 
       if (serverType !== 'velocity') {
@@ -166,21 +224,22 @@ export default function Wizard() {
       await fetchServers();
       
       setInstallStatus('Complete!');
+      reportInstall({ id: installId, name: `${serverType} ${version}`, state: 'done' });
       setTimeout(() => navigate('/servers'), 1500);
 
     } catch (err: any) {
+      reportInstall({ id: installId, name: `${serverType} ${version}`, state: 'failed' });
       setError(err.toString());
       setStep(7); // go back to EULA step on error
     }
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 w-full flex flex-col h-full">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Create New Server</h1>
-        
+    <div id="tour-wizard" data-step={step} className="p-4 sm:p-6 lg:p-8 w-full flex flex-col h-full">
+      <div>
+        <PageHeader title="Create New Server" />
         {/* Progress Bar */}
-        <div className="flex items-center gap-2 mt-6">
+        <div className="-mt-2 mb-8 flex items-center gap-2">
           {[1,2,3,4,5,6,7,8].map(s => (
             <div key={s} className="flex-1 h-2 rounded-full overflow-hidden bg-[#2a2b2f]">
               <div className={`h-full transition-all duration-300 ${s < step ? 'bg-emerald-500' : s === step ? 'bg-blue-500' : 'bg-transparent'}`}></div>
@@ -190,6 +249,11 @@ export default function Wizard() {
       </div>
 
       <div className="flex-1 bg-[#1c1d21] border border-[#2a2b2f] rounded-lg p-8 shadow-xl">
+        {step < 8 && !localStorage.getItem('minedock_tour_seen') && (
+          <div className="mb-6 rounded-md border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-200">
+            <span className="font-semibold">Tutorial:</span> {TUTORIAL[step]}
+          </div>
+        )}
         {error && (
           <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-md text-sm">
             {error}
@@ -197,7 +261,7 @@ export default function Wizard() {
         )}
 
         {step === 1 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
+          <div id="tour-install-path" className="space-y-4 animate-in fade-in slide-in-from-right-4">
             <h2 className="text-xl font-semibold text-white">1. Server Name</h2>
             <p className="text-gray-400 text-sm">Give your new Minecraft server a recognizable name.</p>
             <input
@@ -223,7 +287,7 @@ export default function Wizard() {
                 className="flex-1 bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-4 py-3 text-white focus:outline-none focus:border-blue-500"
                 placeholder="C:\\Servers\\MyServer"
               />
-              <button onClick={selectDir} className="px-4 py-3 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white rounded-md transition-colors flex items-center gap-2">
+              <button type="button" onClick={(e) => { e.preventDefault(); selectDir(); }} className="px-4 py-3 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white rounded-md transition-colors flex items-center gap-2">
                 <Folder size={18} /> Browse
               </button>
             </div>
@@ -232,7 +296,7 @@ export default function Wizard() {
         )}
 
         {step === 3 && (
-          <div className="space-y-5 animate-in fade-in slide-in-from-right-4">
+          <div id="tour-software-version" className="space-y-5 animate-in fade-in slide-in-from-right-4">
             <div>
               <h2 className="text-xl font-semibold text-white">3. Server Software</h2>
               <p className="text-gray-400 text-sm mt-1">Choose software, then select an available version.</p>
@@ -250,7 +314,7 @@ export default function Wizard() {
                   }}
                   className={`flex items-center gap-3 p-4 rounded-lg border text-left transition-colors ${serverType === software.id ? 'border-blue-500 bg-blue-500/10' : 'border-[#2a2b2f] bg-[#141517] hover:border-gray-600'}`}
                 >
-                  {software.icon ? <img src={software.icon} alt="" className="w-9 h-9 object-contain" /> : <Box size={32} className="text-emerald-400" />}
+                  <img src={software.icon} alt="" className="w-9 h-9 object-contain" />
                   <span className="min-w-0">
                     <span className="block font-semibold text-white">{software.name}</span>
                     <span className="block text-xs text-gray-500 truncate">{software.description}</span>
@@ -275,7 +339,7 @@ export default function Wizard() {
         )}
 
      {step === 4 && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+          <div id="tour-ram" className="space-y-6 animate-in fade-in slide-in-from-right-4">
             <div>
               <h2 className="text-xl font-semibold text-white">4. RAM Allocation</h2>
               <p className="text-gray-400 text-sm mt-1">Allocate memory for your server. (System has {sysMemory} MB total)</p>
@@ -344,7 +408,7 @@ export default function Wizard() {
         )}
 
         {step === 5 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
+          <div id="tour-port" className="space-y-4 animate-in fade-in slide-in-from-right-4">
             <h2 className="text-xl font-semibold text-white">5. Server Port</h2>
             <p className="text-gray-400 text-sm">The network port players will use to connect.</p>
             <input
@@ -357,7 +421,7 @@ export default function Wizard() {
         )}
 
         {step === 6 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
+          <div id="tour-java" className="space-y-4 animate-in fade-in slide-in-from-right-4">
             <h2 className="text-xl font-semibold text-white">6. Java Path</h2>
             <p className="text-gray-400 text-sm">Path to the Java executable. Minecraft 1.20.5+ requires Java 21.</p>
             
@@ -367,6 +431,24 @@ export default function Wizard() {
               </div>
             ) : (
               <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={installJava}
+                  disabled={installingJava}
+                  className="action-button bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  style={{ '--action-width': '13.5rem' } as React.CSSProperties}
+                >
+                  {installingJava && <Loader2 size={16} className="animate-spin" />}
+                  {installingJava ? `Installing Java ${managedJavaMajor}...` : `Install managed Java ${managedJavaMajor}`}
+                </button>
+                <p className="text-xs text-gray-500">Stored inside MineDock. System Java and PATH stay unchanged.</p>
+                {!javaCompatible && (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded text-sm">
+                    {selectedJavaMajor
+                      ? `Selected Java ${selectedJavaMajor} is too old. ${version || serverType} requires Java ${managedJavaMajor}.`
+                      : `Select a working Java ${managedJavaMajor}+ executable or install the managed runtime.`}
+                  </div>
+                )}
                 {detectedJavas.length === 0 && (
                   <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded text-sm">
                     No Java installations were automatically detected. You may need to manually provide the path.
@@ -406,7 +488,7 @@ export default function Wizard() {
         )}
 
         {step === 7 && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+          <div id="tour-eula" className="space-y-6 animate-in fade-in slide-in-from-right-4">
             <h2 className="text-xl font-semibold text-white">7. {serverType === 'velocity' ? 'Ready to Install' : 'Minecraft EULA'}</h2>
             {serverType === 'velocity' ? (
               <div className="bg-[#0f0f11] border border-[#2a2b2f] p-4 rounded-md text-sm text-gray-400">
@@ -427,15 +509,14 @@ export default function Wizard() {
         )}
 
      {step === 8 && (
-          <div className="space-y-6 animate-in fade-in flex flex-col items-center justify-center py-12">
-            <Loader2 size={48} className="animate-spin text-blue-500 mb-4" />
+          <div className="fixed inset-0 z-[10001] space-y-6 animate-in fade-in flex flex-col items-center justify-center bg-[#0f0f11]">
             <h2 className="text-2xl font-bold text-white">Installing Server</h2>
             <p className="text-gray-400">{installStatus}</p>
             
             {downloadProgress > 0 && downloadProgress < 100 && (
               <div className="w-full max-w-md mt-4">
                 <div className="h-2 w-full bg-[#2a2b2f] rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500 transition-all duration-200" style={{ width: `${downloadProgress}%` }}></div>
+                  <div className="h-full bg-blue-500" style={{ width: `${downloadProgress}%` }}></div>
                 </div>
                 <p className="text-center text-xs text-gray-500 mt-2">{Math.round(downloadProgress)}%</p>
               </div>
@@ -475,7 +556,7 @@ export default function Wizard() {
               }
               setStep(step + 1);
             }}
-            disabled={(step === 2 && !hasValidInstallPath) || (step === 3 && (loading || !version))}
+            disabled={(step === 2 && !hasValidInstallPath) || (step === 3 && (loading || !version)) || (step === 6 && !javaCompatible)}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Next <ChevronRight size={18} />
@@ -484,7 +565,11 @@ export default function Wizard() {
 
         {step === 7 && (
           <button
-            onClick={handleInstall}
+            id="tour-install-server"
+            onClick={() => {
+              window.dispatchEvent(new Event('minedock:wizard-complete'));
+              handleInstall();
+            }}
             disabled={serverType !== 'velocity' && !eulaAccepted}
             className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
           >

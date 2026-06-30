@@ -7,11 +7,23 @@ import { Play, Square, Trash2, FolderOpen, Settings as SettingsIcon, Upload, Loa
 import { Server } from '../types';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { notify } from '../components/Notifications';
+import PageHeader from '../components/PageHeader';
+import { failArmedSafeApply } from '../lib/safeApply';
+import { getSoftwareInfo } from '../lib/software';
+
+const CONFETTI = Array.from({ length: 20 }, (_, index) => ({
+  color: ['#60a5fa', '#34d399', '#fbbf24', '#f472b6'][index % 4],
+  x: `${Math.cos(index * 2.4) * (90 + index * 4)}px`,
+  y: `${Math.sin(index * 2.4) * (70 + index * 3) - 80}px`,
+  rotate: `${index * 47}deg`,
+}));
 
 export default function Servers() {
   const { servers, fetchServers, setSelectedServer, settings } = useStore();
   const [pending, setPending] = useState<{ action: 'stop' | 'delete'; server: Server } | null>(null);
   const [deleteFiles, setDeleteFiles] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confetti, setConfetti] = useState<{ x: number; y: number } | null>(null);
   const navigate = useNavigate();
 
   // Import Server state
@@ -109,7 +121,13 @@ export default function Servers() {
     e.stopPropagation();
     try {
       await invoke('start_mc_server', { id });
+      if (!localStorage.getItem('minedock_tour_seen')) {
+        setConfetti({ x: e.clientX, y: e.clientY });
+        window.dispatchEvent(new Event('minedock:tutorial-complete'));
+        setTimeout(() => setConfetti(null), 1000);
+      }
     } catch (err) {
+      failArmedSafeApply(id, err);
       console.error(err);
     }
   };
@@ -126,19 +144,29 @@ export default function Servers() {
   };
 
   const deleteServer = async (server: Server) => {
+    if (deleting) return;
+    setDeleting(true);
     try {
       if (deleteFiles) {
-        await invoke('delete_server_files', { serverPath: server.install_path });
+        await invoke('delete_server_files', { id: server.id });
       }
       await invoke('remove_server', { id: server.id });
       setPending(null);
       setDeleteFiles(false);
-      fetchServers();
-    } catch (err) { console.error(err); }
+      await fetchServers();
+    } catch (err) {
+      notify(`Delete failed: ${err}`, 'error');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleDelete = (e: React.MouseEvent, server: Server) => {
     e.stopPropagation();
+    if (server.status !== 'offline') {
+      notify('Stop the server before deleting it.', 'warning');
+      return;
+    }
     if (settings?.confirm_delete) {
       setPending({ action: 'delete', server });
       setDeleteFiles(false);
@@ -149,22 +177,36 @@ export default function Servers() {
   const openFolder = async (e: React.MouseEvent, path: string) => {
     e.stopPropagation();
     try {
-      // requires tauri-plugin-shell which we added
-      const { Command } = await import('@tauri-apps/plugin-shell');
-      Command.create('explorer', [path]).spawn();
+      const { openPath } = await import('@tauri-apps/plugin-opener');
+      await openPath(path);
     } catch (err) {
       console.error(err);
+      notify(`Failed to open folder: ${err}`, 'error');
     }
   };
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 w-full">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Servers</h1>
-          <p className="text-gray-400">Manage your local Minecraft servers.</p>
+      {confetti && (
+        <div className="confetti-burst" style={{ left: confetti.x, top: confetti.y }} aria-hidden="true">
+          {CONFETTI.map((piece, index) => (
+            <span
+              key={index}
+              style={{
+                backgroundColor: piece.color,
+                '--confetti-x': piece.x,
+                '--confetti-y': piece.y,
+                '--confetti-rotate': piece.rotate,
+              } as React.CSSProperties}
+            />
+          ))}
         </div>
-        <div className="flex gap-3">
+      )}
+      <PageHeader
+        title="Servers"
+        description="Manage your local Minecraft servers."
+        actions={
+          <>
           <button
             onClick={() => setShowImport(true)}
             className="flex items-center gap-2 bg-[#1c1d21] hover:bg-[#2a2b2f] border border-[#2a2b2f] text-gray-300 px-4 py-2 rounded-md font-medium transition-colors"
@@ -178,8 +220,9 @@ export default function Servers() {
           >
             Create Server
           </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg overflow-hidden">
         <table className="w-full text-left">
@@ -205,8 +248,13 @@ export default function Servers() {
                 }}
               >
                 <td className="px-6 py-4 font-medium text-white">
-                  {server.name}
-                  <div className="text-xs text-gray-500 font-normal mt-1">{server.server_type}</div>
+                  <div className="flex items-center gap-3">
+                    <img src={getSoftwareInfo(server.server_type).icon} alt="" className="h-7 w-7 shrink-0 rounded-md object-contain" />
+                    <div className="min-w-0">
+                      <div className="truncate">{server.name}</div>
+                      <div className="mt-1 text-xs font-normal text-gray-500">{getSoftwareInfo(server.server_type).name}</div>
+                    </div>
+                  </div>
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex flex-col gap-1 items-start">
@@ -283,8 +331,9 @@ export default function Servers() {
 
                     <button 
                       onClick={(e) => handleDelete(e, server)}
-                      className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#2a2b2f] rounded"
-                      title="Delete Server Profile"
+                      disabled={server.status !== 'offline'}
+                      className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#2a2b2f] rounded disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                      title={server.status === 'offline' ? 'Delete Server Profile' : 'Stop server before deleting'}
                     >
                       <Trash2 size={18} />
                     </button>
@@ -308,6 +357,8 @@ export default function Servers() {
         confirmLabel={pending.action === 'stop' ? 'Stop' : 'Delete'}
         checkboxLabel={pending.action === 'delete' ? 'Delete all server files from disk' : undefined}
         checkboxValue={deleteFiles}
+        busy={deleting}
+        busyMessage={deleteFiles ? 'Deleting server files. Large servers may take several minutes.' : 'Removing server profile...'}
         onCheckboxChange={setDeleteFiles}
         onCancel={() => { setPending(null); setDeleteFiles(false); }}
         onConfirm={() => pending.action === 'stop' ? (setPending(null), stopServer(pending.server.id!)) : deleteServer(pending.server)}

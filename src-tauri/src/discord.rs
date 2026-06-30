@@ -1,6 +1,6 @@
-use tokio::sync::mpsc::UnboundedSender;
-use tauri::{State, command};
 use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
+use tauri::{command, State};
+use tokio::sync::mpsc::UnboundedSender;
 
 pub enum RpcMessage {
     Update {
@@ -86,8 +86,12 @@ pub fn start_rpc_worker(mut rx: tokio::sync::mpsc::UnboundedReceiver<RpcMessage>
                             Some(c) => c,
                             None => {
                                 println!("[Discord RPC] Connecting to Discord...");
-                                let mut client = DiscordIpcClient::new("1520578080664719450").map_err(|e| e.to_string())?;
-                                client.connect().map(|_| client).map_err(|e| e.to_string())?
+                                let mut client = DiscordIpcClient::new("1520578080664719450")
+                                    .map_err(|e| e.to_string())?;
+                                client
+                                    .connect()
+                                    .map(|_| client)
+                                    .map_err(|e| e.to_string())?
                             }
                         };
 
@@ -115,20 +119,19 @@ pub fn start_rpc_worker(mut rx: tokio::sync::mpsc::UnboundedReceiver<RpcMessage>
 
                         if let Some(cur) = players_cur_clone {
                             let max = final_max.unwrap_or(20);
-                            let party = activity::Party::new()
-                                .size([cur, max]);
+                            let party = activity::Party::new().size([cur, max]);
                             act = act.party(party);
                         }
 
                         if let Some(start) = start_time_clone {
-                            let timestamps = activity::Timestamps::new()
-                                .start(start);
+                            let timestamps = activity::Timestamps::new().start(start);
                             act = act.timestamps(timestamps);
                         }
 
                         // 3. Set activity
                         c.set_activity(act).map(|_| c).map_err(|e| e.to_string())
-                    }).await;
+                    })
+                    .await;
 
                     match set_res {
                         Ok(Ok(c_back)) => {
@@ -163,7 +166,8 @@ pub fn start_rpc_worker(mut rx: tokio::sync::mpsc::UnboundedReceiver<RpcMessage>
                     if let Some(mut c) = client.take() {
                         let _ = tokio::task::spawn_blocking(move || {
                             let _ = c.close();
-                        }).await;
+                        })
+                        .await;
                     }
                 }
             }
@@ -181,14 +185,17 @@ pub fn update_discord_rpc(
     install_path: Option<String>,
     start_time: Option<i64>,
 ) -> Result<(), String> {
-    state.tx.send(RpcMessage::Update {
-        details,
-        state_str,
-        players_cur,
-        players_max,
-        install_path,
-        start_time,
-    }).map_err(|e| e.to_string())
+    state
+        .tx
+        .send(RpcMessage::Update {
+            details,
+            state_str,
+            players_cur,
+            players_max,
+            install_path,
+            start_time,
+        })
+        .map_err(|e| e.to_string())
 }
 
 #[command]

@@ -1,17 +1,18 @@
-use rusqlite::{Connection, Result, params};
-use crate::models::{Server, AppSettings};
-use std::path::PathBuf;
+use crate::models::{AppSettings, Server};
+use crate::paths;
+use rusqlite::{params, Connection, Result};
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 pub struct DbState {
     pub db: Mutex<Connection>,
 }
 
 pub fn init_db(app: &AppHandle) -> Result<Connection> {
-    let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let legacy_dir = paths::legacy_app_data_dir(app).ok();
+    let app_dir = paths::app_data_dir(app).unwrap_or_else(|_| ".Minedock".into());
     std::fs::create_dir_all(&app_dir).unwrap_or_default();
-    
+
     let db_path = app_dir.join("minedock.db");
     let conn = Connection::open(&db_path)?;
 
@@ -34,15 +35,10 @@ pub fn init_db(app: &AppHandle) -> Result<Connection> {
         )",
         [],
     )?;
-    let _ = conn.execute("ALTER TABLE servers ADD COLUMN share_enabled BOOLEAN NOT NULL DEFAULT 1", []);
-    for migration in [
-        "ALTER TABLE settings ADD COLUMN auto_restart BOOLEAN NOT NULL DEFAULT 0",
-        "ALTER TABLE settings ADD COLUMN tunnel_enabled BOOLEAN NOT NULL DEFAULT 0",
-        "ALTER TABLE settings ADD COLUMN tunnel_relay TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE settings ADD COLUMN tunnel_token TEXT NOT NULL DEFAULT ''",
-    ] {
-        let _ = conn.execute(migration, []);
-    }
+    let _ = conn.execute(
+        "ALTER TABLE servers ADD COLUMN share_enabled BOOLEAN NOT NULL DEFAULT 1",
+        [],
+    );
 
     // Create settings table
     conn.execute(
@@ -56,10 +52,34 @@ pub fn init_db(app: &AppHandle) -> Result<Connection> {
             confirm_delete BOOLEAN NOT NULL CHECK (confirm_delete IN (0, 1)),
             confirm_stop BOOLEAN NOT NULL CHECK (confirm_stop IN (0, 1)),
             auto_scroll_console BOOLEAN NOT NULL CHECK (auto_scroll_console IN (0, 1)),
-            check_updates_startup BOOLEAN NOT NULL CHECK (check_updates_startup IN (0, 1))
+            check_updates_startup BOOLEAN NOT NULL CHECK (check_updates_startup IN (0, 1)),
+            auto_restart BOOLEAN NOT NULL DEFAULT 0,
+            tunnel_enabled BOOLEAN NOT NULL DEFAULT 0,
+            tunnel_relay TEXT NOT NULL DEFAULT '',
+            tunnel_token TEXT NOT NULL DEFAULT ''
         )",
         [],
     )?;
+    for migration in [
+        "ALTER TABLE settings ADD COLUMN auto_restart BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE settings ADD COLUMN tunnel_enabled BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE settings ADD COLUMN tunnel_relay TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN tunnel_token TEXT NOT NULL DEFAULT ''",
+    ] {
+        let _ = conn.execute(migration, []);
+    }
+    if let Some(legacy_dir) = legacy_dir {
+        let legacy = legacy_dir.to_string_lossy();
+        let current = app_dir.to_string_lossy();
+        let _ = conn.execute(
+            "UPDATE settings SET default_java_path = REPLACE(default_java_path, ?1, ?2)",
+            params![legacy.as_ref(), current.as_ref()],
+        );
+        let _ = conn.execute(
+            "UPDATE servers SET java_path = REPLACE(java_path, ?1, ?2)",
+            params![legacy.as_ref(), current.as_ref()],
+        );
+    }
 
     // Insert default settings if they don't exist
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))?;
@@ -167,11 +187,19 @@ pub fn update_server_port(conn: &Connection, server_id: i64, port: i32) -> Resul
 }
 
 pub fn update_server_sharing(conn: &Connection, server_id: i64, enabled: bool) -> Result<()> {
-    conn.execute("UPDATE servers SET share_enabled = ?1 WHERE id = ?2", params![enabled, server_id])?;
+    conn.execute(
+        "UPDATE servers SET share_enabled = ?1 WHERE id = ?2",
+        params![enabled, server_id],
+    )?;
     Ok(())
 }
 
-pub fn update_server_version(conn: &Connection, server_id: i64, version: &str, jar_path: &str) -> Result<()> {
+pub fn update_server_version(
+    conn: &Connection,
+    server_id: i64,
+    version: &str,
+    jar_path: &str,
+) -> Result<()> {
     conn.execute(
         "UPDATE servers SET minecraft_version = ?1, jar_path = ?2 WHERE id = ?3",
         params![version, jar_path, server_id],
@@ -179,7 +207,13 @@ pub fn update_server_version(conn: &Connection, server_id: i64, version: &str, j
     Ok(())
 }
 
-pub fn update_server_type_and_version(conn: &Connection, server_id: i64, server_type: &str, version: &str, jar_path: &str) -> Result<()> {
+pub fn update_server_type_and_version(
+    conn: &Connection,
+    server_id: i64,
+    server_type: &str,
+    version: &str,
+    jar_path: &str,
+) -> Result<()> {
     conn.execute(
         "UPDATE servers SET server_type = ?1, minecraft_version = ?2, jar_path = ?3 WHERE id = ?4",
         params![server_type, version, jar_path, server_id],
@@ -203,7 +237,11 @@ pub fn update_server_profile(
     Ok(())
 }
 
-pub fn update_server_last_started(conn: &Connection, server_id: i64, last_started_at: &str) -> Result<()> {
+pub fn update_server_last_started(
+    conn: &Connection,
+    server_id: i64,
+    last_started_at: &str,
+) -> Result<()> {
     conn.execute(
         "UPDATE servers SET last_started_at = ?1 WHERE id = ?2",
         params![last_started_at, server_id],
@@ -212,10 +250,7 @@ pub fn update_server_last_started(conn: &Connection, server_id: i64, last_starte
 }
 
 pub fn delete_server(conn: &Connection, server_id: i64) -> Result<()> {
-    conn.execute(
-        "DELETE FROM servers WHERE id = ?1",
-        params![server_id],
-    )?;
+    conn.execute("DELETE FROM servers WHERE id = ?1", params![server_id])?;
     Ok(())
 }
 
@@ -269,11 +304,11 @@ pub fn update_settings(conn: &Connection, settings: &AppSettings) -> Result<()> 
             settings.confirm_delete,
             settings.confirm_stop,
             settings.auto_scroll_console,
-            settings.check_updates_startup
-            ,settings.auto_restart
-            ,settings.tunnel_enabled
-            ,settings.tunnel_relay
-            ,settings.tunnel_token
+            settings.check_updates_startup,
+            settings.auto_restart,
+            settings.tunnel_enabled,
+            settings.tunnel_relay,
+            settings.tunnel_token
         ],
     )?;
     Ok(())

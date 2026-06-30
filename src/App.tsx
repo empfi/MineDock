@@ -1,38 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useStore } from './store';
-import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, PackageSearch } from 'lucide-react';
+import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, PackageSearch, Skull, HeartPulse, Search } from 'lucide-react';
 import { cn } from './lib/utils';
 
-// Pages
-import Overview from './pages/Overview';
-import Servers from './pages/Servers';
-import Console from './pages/Console';
-import Files from './pages/Files';
-import Properties from './pages/Properties';
-import Backups from './pages/Backups';
-import Versions from './pages/Versions';
-import Logs from './pages/Logs';
-import SettingsPage from './pages/Settings';
-import Wizard from './pages/Wizard';
-import Players from './pages/Players';
 import Notifications, { NotificationCenter } from './components/Notifications';
 import WindowState from './components/WindowState';
-import Worlds from './pages/Worlds';
-import Additions from './pages/Additions';
-import PluginDownloads from './components/PluginDownloads';
+import ProgressHub from './components/ProgressHub';
 import { notify } from './components/Notifications';
 import GuidedTour from './components/GuidedTour';
+import AppRoutes from './components/AppRoutes';
+import SafeApplyModal from './components/SafeApplyModal';
+import { failArmedSafeApply, observeSafeApplyStatus } from './lib/safeApply';
+import { getSoftwareInfo } from './lib/software';
+import CommandPalette from './components/CommandPalette';
 function Sidebar() {
   const { servers, selectedServerId, setSelectedServer } = useStore();
   const selectedServer = servers.find(s => s.id === selectedServerId);
   const location = useLocation();
   const navigate = useNavigate();
-  const [serverAction, setServerAction] = useState<'start' | 'stop' | 'restart' | null>(null);
-  const serverPaths = ['/console', '/players', '/additions', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs'];
+  const [serverAction, setServerAction] = useState<'start' | 'stop' | 'restart' | 'kill' | null>(null);
+  const serverPaths = ['/console', '/health', '/players', '/additions', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs'];
   const managingServer = Boolean(selectedServer && serverPaths.includes(location.pathname));
 
   const links = [
@@ -43,22 +34,25 @@ function Sidebar() {
 
   const serverLinks = [
     { to: "/console", icon: Terminal, label: "Console" },
-    { to: "/players", icon: Users, label: "Players" },
-    { to: "/additions", icon: PackageSearch, label: "Additions" },
-    { to: "/worlds", icon: Globe2, label: "Worlds" },
+    { to: "/health", icon: HeartPulse, label: "Health" },
     { to: "/files", icon: FolderGit2, label: "Files" },
+    { to: "/additions", icon: PackageSearch, label: "Additions" },
+    { to: "/players", icon: Users, label: "Players" },
+    { to: "/worlds", icon: Globe2, label: "Worlds" },
     { to: "/properties", icon: Save, label: "Properties" },
-    { to: "/versions", icon: Download, label: "Versions" },
     { to: "/backups", icon: Database, label: "Backups" },
+    { to: "/versions", icon: Download, label: "Versions" },
     { to: "/logs", icon: FileText, label: "Logs" },
   ];
 
-  const runServerAction = async (action: 'start' | 'stop' | 'restart') => {
+  const runServerAction = async (action: 'start' | 'stop' | 'restart' | 'kill') => {
     if (!selectedServer?.id) return;
     setServerAction(action);
     try {
       if (action === 'start') {
         await invoke('start_mc_server', { id: selectedServer.id });
+      } else if (action === 'kill') {
+        await invoke('kill_mc_server', { id: selectedServer.id });
       } else {
         await invoke('stop_mc_server', { id: selectedServer.id });
         if (action === 'restart') {
@@ -74,7 +68,9 @@ function Sidebar() {
         }
       }
     } catch (error) {
-      notify(`Failed to ${action} server: ${error}`, 'error');
+      if (!failArmedSafeApply(selectedServer.id, error)) {
+        notify(`Failed to ${action} server: ${error}`, 'error');
+      }
     } finally {
       setServerAction(null);
     }
@@ -99,7 +95,7 @@ function Sidebar() {
           </button>
         )}
         <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-          <img src="/logo.png" alt="MineDock" className="w-6 h-6 rounded" />
+          {!managingServer && <img src="/logo.png" alt="MineDock" className="w-6 h-6 rounded" />}
           <span className="hidden lg:inline">{managingServer ? selectedServer?.name : 'MineDock'}</span>
         </h1>
       </div>
@@ -149,42 +145,38 @@ function Sidebar() {
         )}
       </div>
 
-      <div className={`p-2 lg:p-4 ${managingServer ? '' : 'border-t border-[#2a2b2f]'}`}>
+      <div className="p-2 lg:p-4 border-t border-[#2a2b2f]">
         {managingServer ? (
           <div className="space-y-2">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               <button
                 onClick={() => runServerAction('start')}
                 disabled={serverAction !== null || (selectedServer?.status !== 'offline' && selectedServer?.status !== 'crashed' && selectedServer?.status !== 'crash-loop')}
-                title="Start server"
+                title={serverAction ? `${serverAction} in progress` : selectedServer?.status === 'online' ? 'Server is already running' : 'Start server'}
                 aria-label="Start server"
                 className="flex items-center justify-center py-2 rounded-md bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25 disabled:opacity-30 disabled:cursor-not-allowed"
               >{serverAction === 'start' ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />}</button>
               <button
+                onClick={() => runServerAction('restart')}
+                disabled={serverAction !== null || selectedServer?.status !== 'online'}
+                title={serverAction ? `${serverAction} in progress` : selectedServer?.status !== 'online' ? 'Server must be online to restart' : 'Restart server'}
+                aria-label="Restart server"
+                className="flex items-center justify-center py-2 rounded-md bg-blue-600/15 text-blue-400 hover:bg-blue-600/25 disabled:opacity-30 disabled:cursor-not-allowed"
+              >{serverAction === 'restart' ? <Loader2 size={17} className="animate-spin" /> : <RotateCw size={17} />}</button>
+              <button
                 onClick={() => runServerAction('stop')}
                 disabled={serverAction !== null || selectedServer?.status !== 'online'}
-                title="Stop server"
+                title={serverAction ? `${serverAction} in progress` : selectedServer?.status !== 'online' ? 'Server is not running' : 'Stop server'}
                 aria-label="Stop server"
                 className="flex items-center justify-center py-2 rounded-md bg-red-600/15 text-red-400 hover:bg-red-600/25 disabled:opacity-30 disabled:cursor-not-allowed"
               >{serverAction === 'stop' ? <Loader2 size={16} className="animate-spin" /> : <Square size={16} />}</button>
               <button
-                onClick={() => runServerAction('restart')}
-                disabled={serverAction !== null || selectedServer?.status !== 'online'}
-                title="Restart server"
-                aria-label="Restart server"
-                className="flex items-center justify-center py-2 rounded-md bg-blue-600/15 text-blue-400 hover:bg-blue-600/25 disabled:opacity-30 disabled:cursor-not-allowed"
-              >{serverAction === 'restart' ? <Loader2 size={17} className="animate-spin" /> : <RotateCw size={17} />}</button>
-            </div>
-            <div className="border-t border-[#2a2b2f] pt-2">
-            <div className="flex items-center justify-center lg:justify-start gap-3 rounded-md border border-[#2a2b2f] bg-[#101113] px-2 lg:px-3 py-2.5">
-              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[#2a2b2f] text-xs font-semibold text-gray-400">
-                E
-              </div>
-              <div className="hidden min-w-0 lg:block">
-                <div className="truncate text-sm font-medium text-gray-200">empfi</div>
-                <div className="text-xs text-gray-600">Local profile</div>
-              </div>
-            </div>
+                onClick={() => runServerAction('kill')}
+                disabled={serverAction !== null || !selectedServer || ['offline', 'crashed', 'crash-loop'].includes(selectedServer.status)}
+                title="Kill server process (Force Stop)"
+                aria-label="Kill server process"
+                className="flex items-center justify-center py-2 rounded-md bg-rose-600/15 text-rose-400 hover:bg-rose-600/25 disabled:opacity-30 disabled:cursor-not-allowed"
+              >{serverAction === 'kill' ? <Loader2 size={17} className="animate-spin" /> : <Skull size={17} />}</button>
             </div>
           </div>
         ) : <NavLink
@@ -209,8 +201,7 @@ function TitleBar() {
   const onClose = () => appWindow.close();
 
   return (
-    <div 
-      data-tauri-drag-region 
+    <div
       className="h-10 bg-[#141517] border-b border-[#2a2b2f] flex items-center justify-between pl-3 pr-0 select-none flex-shrink-0 z-[20000]"
     >
       <div className="flex items-center gap-2 pointer-events-none">
@@ -222,7 +213,12 @@ function TitleBar() {
       <div data-tauri-drag-region className="flex-1 h-full" />
       
       <div className="flex items-center">
-        <PluginDownloads />
+        <button onClick={() => window.dispatchEvent(new Event('minedock:command-palette'))} className="mr-1 flex h-7 items-center gap-2 rounded-md border border-[#2a2b2f] px-2.5 text-xs text-gray-500 hover:bg-[#202124] hover:text-gray-200" title="Open command palette">
+          <Search size={13} />
+          <span>Search</span>
+          <kbd className="text-[10px] text-gray-600">Ctrl K</kbd>
+        </button>
+        <ProgressHub />
         <NotificationCenter />
         <button
           onClick={onMinimize}
@@ -317,12 +313,32 @@ function Layout() {
   }, [serverPickerOpen]);
 
   useEffect(() => {
+    if (draggedTab === null) return;
+    const stopDragging = () => setDraggedTab(null);
+    window.addEventListener('pointerup', stopDragging);
+    window.addEventListener('pointercancel', stopDragging);
+    return () => {
+      window.removeEventListener('pointerup', stopDragging);
+      window.removeEventListener('pointercancel', stopDragging);
+    };
+  }, [draggedTab]);
+
+  const handleTabStripWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const strip = event.currentTarget;
+    if (strip.scrollWidth <= strip.clientWidth) return;
+    if (event.deltaY === 0 && event.deltaX === 0) return;
+    strip.scrollLeft -= event.deltaX !== 0 ? event.deltaX : event.deltaY;
+    event.preventDefault();
+  };
+
+  useEffect(() => {
     fetchServers();
     fetchSettings();
 
     const unlisten = listen('server-status-changed', (event: any) => {
       const [id, status] = event.payload;
       updateServerStatus(id, status);
+      observeSafeApplyStatus(id, status);
       const name = useStore.getState().servers.find(server => server.id === id)?.name ?? 'Host';
       if (status === 'crashed') notify(`${name} crashed. Check the latest log for details.`, 'error');
       if (status === 'crash-loop') notify(`${name} restart loop stopped after repeated crashes.`, 'error');
@@ -367,6 +383,16 @@ function Layout() {
       unlistenRestart.then(f => f());
     };
   }, []);
+
+  useEffect(() => {
+    const openFailedSafeApply = (event: Event) => {
+      const serverId = (event as CustomEvent<{ serverId?: number }>).detail?.serverId;
+      if (serverId) setSelectedServer(serverId);
+      navigate('/console');
+    };
+    window.addEventListener('minedock:safe-apply-failed', openFailedSafeApply);
+    return () => window.removeEventListener('minedock:safe-apply-failed', openFailedSafeApply);
+  }, [navigate, setSelectedServer]);
 
   const onlinePlayersState = useStore(state => state.onlinePlayers);
 
@@ -420,60 +446,63 @@ function Layout() {
         <Sidebar />
         <main className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {managingServer && (
-          <div className="server-tabs flex h-10 flex-shrink-0 overflow-x-auto border-b border-[#2a2b2f] bg-[#141517]">
-            {openServerIds.map((id, index) => {
-              const server = servers.find(item => item.id === id);
-              if (!server) return null;
-              return (
-                <div
-                  key={id}
-                  draggable
-                  role="button"
-                  tabIndex={0}
-                  onDragStart={event => {
-                    setDraggedTab(index);
-                    event.dataTransfer.effectAllowed = 'move';
-                  }}
-                  onDragEnter={() => {
-                    if (draggedTab !== null && draggedTab !== index) {
-                      moveServerTab(draggedTab, index);
-                      setDraggedTab(index);
-                    }
-                  }}
-                  onDragOver={event => event.preventDefault()}
-                  onDragEnd={() => setDraggedTab(null)}
-                  onClick={() => setSelectedServer(id)}
-                  onAuxClick={event => {
-                    if (event.button === 1) closeTab(id);
-                  }}
-                  className={cn(
-                    'group flex min-w-36 max-w-56 items-center gap-2 border-r border-[#2a2b2f] px-3 text-xs',
-                    selectedServerId === id ? 'bg-[#202124] text-white' : 'text-gray-500 hover:bg-[#1b1c1f] hover:text-gray-300'
-                  )}
-                  title={`${server.name} · ${server.server_type}`}
-                >
-                  <img
-                    src={server.server_type === 'vanilla' ? '/logo.png' : `/software/${server.server_type}.svg`}
-                    alt=""
-                    className="h-4 w-4 flex-shrink-0 object-contain"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-left">{server.name}</span>
-                  <span
-                    role="button"
-                    aria-label={`Close ${server.name}`}
-                    onClick={event => {
-                      event.stopPropagation();
-                      closeTab(id);
-                    }}
-                    className="rounded p-0.5 text-gray-600 hover:bg-[#34353a] hover:text-white"
-                  ><X size={13} /></span>
-                </div>
-              );
-            })}
-            <div ref={serverPickerRef} className="relative flex-shrink-0">
+          <div className="server-tabs flex h-10 flex-shrink-0 border-b border-[#2a2b2f] bg-[#141517]">
+            <div className="relative min-w-0 flex-1 h-full">
+              <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-[#141517] to-transparent" />
+              <div className="w-full h-full overflow-x-auto overflow-y-hidden" onWheel={handleTabStripWheel}>
+                <div className="flex h-full min-w-max">
+                {openServerIds.map((id, index) => {
+                  const server = servers.find(item => item.id === id);
+                  if (!server) return null;
+                  return (
+                    <div
+                      key={id}
+                      role="button"
+                      tabIndex={0}
+                      onPointerDown={event => {
+                        if (event.button !== 0) return;
+                        setDraggedTab(index);
+                      }}
+                      onPointerEnter={event => {
+                        if ((event.buttons & 1) !== 0 && draggedTab !== null && draggedTab !== index) {
+                          moveServerTab(draggedTab, index);
+                          setDraggedTab(index);
+                        }
+                      }}
+                      onClick={() => setSelectedServer(id)}
+                      onAuxClick={event => {
+                        if (event.button === 1) closeTab(id);
+                      }}
+                      className={cn(
+                        'group relative z-0 flex min-w-36 max-w-56 cursor-grab items-center gap-2 border-r border-[#2a2b2f] px-3 text-xs active:cursor-grabbing',
+                        selectedServerId === id
+                          ? 'bg-[#1c1d21] text-white shadow-[inset_0_-2px_0_0_rgb(59_130_246)]'
+                          : 'text-gray-500 hover:bg-[#1b1c1f] hover:text-gray-300'
+                      )}
+                      title={`${server.name} · ${server.server_type}`}
+                    >
+                      <img src={getSoftwareInfo(server.server_type).icon} alt="" className="h-4 w-4 flex-shrink-0 object-contain" />
+                      <span className="min-w-0 flex-1 truncate text-left">{server.name}</span>
+                      <span
+                        role="button"
+                        aria-label={`Close ${server.name}`}
+                        onPointerDown={event => event.stopPropagation()}
+                        onClick={event => {
+                          event.stopPropagation();
+                          closeTab(id);
+                        }}
+                        className="rounded p-0.5 text-gray-600 hover:bg-[#34353a] hover:text-white"
+                      ><X size={13} /></span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          <div ref={serverPickerRef} className="relative flex-shrink-0 border-l border-[#2a2b2f]">
               <button
                 onClick={() => setServerPickerOpen(open => !open)}
-                className="flex h-full w-10 items-center justify-center border-r border-[#2a2b2f] text-gray-500 hover:bg-[#1b1c1f] hover:text-white"
+                className="relative z-20 flex h-full w-10 items-center justify-center text-gray-500 hover:bg-[#1b1c1f] hover:text-white"
                 title="Open another server"
                 aria-label="Open another server"
               >
@@ -504,7 +533,7 @@ function Layout() {
                       }}
                       className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white"
                     >
-                      <img src={server.server_type === 'vanilla' ? '/logo.png' : `/software/${server.server_type}.svg`} alt="" className="h-4 w-4 object-contain" />
+                      <img src={getSoftwareInfo(server.server_type).icon} alt="" className="h-4 w-4 object-contain" />
                       <span className="truncate">{server.name}</span>
                     </button>
                   ))}
@@ -548,27 +577,14 @@ function Layout() {
           </div>
         )}
         <div className="flex-1 min-h-0 overflow-y-auto">
-        <Routes>
-          <Route path="/" element={<Overview />} />
-          <Route path="/servers" element={<Servers />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/wizard" element={<Wizard />} />
-          
-          <Route path="/console" element={<Console />} />
-          <Route path="/players" element={<Players />} />
-          <Route path="/additions" element={<Additions />} />
-          <Route path="/worlds" element={<Worlds />} />
-          <Route path="/files" element={<Files />} />
-          <Route path="/properties" element={<Properties />} />
-          <Route path="/versions" element={<Versions />} />
-          <Route path="/backups" element={<Backups />} />
-          <Route path="/logs" element={<Logs />} />
-        </Routes>
+        <AppRoutes />
         </div>
         </main>
       </div>
       <Notifications />
       <GuidedTour />
+      <SafeApplyModal />
+      <CommandPalette />
     </div>
   );
 }

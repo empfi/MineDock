@@ -1,103 +1,85 @@
-import { useStore, PerformanceTick } from '../store';
-import { Server, Activity, Cpu } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useStore } from '../store';
+import { AlertTriangle, Server, Activity, Cpu, FolderX, MemoryStick, Users, Wrench } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-
-function MiniChart({ data, color, label, maxVal }: {
-  data: PerformanceTick[];
-  color: string;
-  label: string;
-  maxVal?: number;
-}) {
-  const width = 220;
-  const height = 64;
-  const padding = 4;
-  const chartWidth = width - padding * 2;
-  const chartHeight = height - padding * 2;
-
-  const values = data.map(d => label === 'CPU' ? d.cpu : d.memory);
-  const latest = values.length > 0 ? values[values.length - 1] : 0;
-  const max = maxVal ?? Math.max(...values, 1);
-
-  // Clamp each value so spikes never exceed the chart area
-  const clamp = (v: number) => Math.max(0, Math.min(v, max));
-
-  const points = values.map((v, i) => {
-    const x = padding + (i / Math.max(values.length - 1, 1)) * chartWidth;
-    const y = padding + chartHeight - (clamp(v) / max) * chartHeight;
-    return `${x},${y}`;
-  });
-
-  const pathD = points.length > 1 ? `M ${points.join(' L ')}` : '';
-  const fillD = points.length > 1
-    ? `M ${padding},${padding + chartHeight} L ${points.join(' L ')} L ${padding + chartWidth},${padding + chartHeight} Z`
-    : '';
-
-  const strokeColor = color === 'blue' ? '#3b82f6' : '#10b981';
-  const clipId = `chart-clip-${label}`;
-
-  return (
-    <div className="flex-1 min-w-0">
-      <div className="flex justify-between items-center mb-1">
-        <span className="text-xs text-gray-400">{label}</span>
-        <span className={`text-sm font-bold ${color === 'blue' ? 'text-blue-400' : 'text-emerald-400'}`}>
-          {label === 'CPU' ? `${latest.toFixed(1)}%` : `${latest} MB`}
-        </span>
-      </div>
-      {/* overflow-hidden + clipPath prevent line spikes from escaping the card */}
-      <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="overflow-hidden">
-        <defs>
-          <linearGradient id={`fill-grad-${label}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={strokeColor} stopOpacity="0.3" />
-            <stop offset="100%" stopColor={strokeColor} stopOpacity="0.01" />
-          </linearGradient>
-          <clipPath id={clipId}>
-            <rect x={padding} y={padding} width={chartWidth} height={chartHeight} />
-          </clipPath>
-        </defs>
-        <g clipPath={`url(#${clipId})`}>
-          {fillD && <path d={fillD} fill={`url(#fill-grad-${label})`} />}
-          {pathD && (
-            <path
-              d={pathD}
-              fill="none"
-              stroke={strokeColor}
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          )}
-        </g>
-        {values.length === 0 && (
-          <text x={width / 2} y={height / 2} textAnchor="middle" fill="#4b5563" fontSize="10">
-            Waiting for data...
-          </text>
-        )}
-      </svg>
-    </div>
-  );
-}
+import PageHeader from '../components/PageHeader';
+import { cn } from '../lib/utils';
+import { invoke } from '@tauri-apps/api/core';
+import { getSoftwareInfo } from '../lib/software';
+import EmptyState from '../components/EmptyState';
 
 export default function Overview() {
-  const { servers, serverStats, setSelectedServer } = useStore();
+  const { servers, setSelectedServer, serverStats, onlinePlayers, settings } = useStore();
   const navigate = useNavigate();
+  const [sysMemory, setSysMemory] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    invoke<number>('get_system_memory').then(setSysMemory).catch(console.error);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const runningServers = servers.filter(s => s.status === 'online' || s.status === 'starting');
   const totalServers = servers.length;
+  const activeStats = Object.entries(serverStats).flatMap(([id, ticks]) => ticks.slice(-1).map(tick => ({ ...tick, id: Number(id) })));
+  const cpu = activeStats.reduce((sum, tick) => sum + tick.cpu, 0);
+  const memory = activeStats.reduce((sum, tick) => sum + tick.memory, 0);
+  const peakMemory = Object.values(serverStats).flat().reduce((peak, tick) => Math.max(peak, tick.memory), 0);
+  const players = Object.values(onlinePlayers).reduce((sum, list) => sum + list.length, 0);
+  const oldestStart = runningServers.map(server => Date.parse(server.last_started_at || '')).filter(Number.isFinite).sort()[0];
+  const uptimeSeconds = oldestStart ? Math.max(0, Math.floor((now - oldestStart) / 1000)) : 0;
+  const uptime = `${Math.floor(uptimeSeconds / 3600)}h ${Math.floor((uptimeSeconds % 3600) / 60)}m`;
+  const problems = servers.flatMap(server => {
+    const items: { key: string; title: string; detail: string; action: string; run: () => void; icon: typeof AlertTriangle }[] = [];
+    if (['crashed', 'crash-loop'].includes(server.status)) items.push({
+      key: `${server.id}:crash`,
+      title: `${server.name} ${server.status === 'crash-loop' ? 'stopped restarting' : 'crashed'}`,
+      detail: 'Open the console and latest logs to inspect the failure.',
+      action: 'Open console',
+      run: () => { setSelectedServer(server.id ?? null); navigate('/console'); },
+      icon: AlertTriangle,
+    });
+    if (server.install_path_exists === false) items.push({
+      key: `${server.id}:folder`,
+      title: `${server.name} folder is missing`,
+      detail: 'MineDock cannot start or edit this server until its folder is restored.',
+      action: 'Manage server',
+      run: () => navigate('/servers'),
+      icon: FolderX,
+    });
+    return items;
+  });
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 w-full">
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Overview</h1>
-          <p className="text-gray-400">Welcome to MineDock server manager.</p>
+      <PageHeader
+        title="Overview"
+        description="Welcome to MineDock server manager."
+        actions={
+          <button onClick={() => navigate('/wizard')} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors">
+            Create Server
+          </button>
+        }
+      />
+
+      {problems.length > 0 && <section className="mb-8">
+        <div className="mb-3 flex items-center gap-2">
+          <Wrench size={18} className="text-amber-400" />
+          <h2 className="font-semibold text-white">Needs attention</h2>
+          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400">{problems.length}</span>
         </div>
-        <button
-          onClick={() => navigate('/wizard')}
-          className="self-start sm:self-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors"
-        >
-          Create Server
-        </button>
-      </div>
+        <div className="overflow-hidden rounded-lg border border-amber-500/20 bg-[#1c1d21]">
+          {problems.map(problem => <div key={problem.key} className="flex items-center gap-4 border-b border-[#2a2b2f] p-4 last:border-0">
+            <div className="rounded-md bg-amber-500/10 p-2 text-amber-400"><problem.icon size={18} /></div>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-white">{problem.title}</p>
+              <p className="mt-0.5 text-sm text-gray-500">{problem.detail}</p>
+            </div>
+            <button onClick={problem.run} className="action-button bg-[#2a2b2f] px-3 py-2 text-sm text-gray-200 hover:bg-[#34353a]">{problem.action}</button>
+          </div>)}
+        </div>
+      </section>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-8">
         <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg p-6 flex flex-col">
@@ -107,7 +89,7 @@ export default function Overview() {
           </div>
           <p className="text-4xl font-bold text-white">{totalServers}</p>
         </div>
-        
+
         <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg p-6 flex flex-col">
           <div className="flex items-center gap-3 text-emerald-400 mb-2">
             <Activity size={20} />
@@ -117,46 +99,96 @@ export default function Overview() {
         </div>
       </div>
 
-      {/* Performance Graphs for running servers */}
-      {runningServers.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-            <Cpu size={18} className="text-blue-400" />
-            Performance Monitor
-          </h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {runningServers.map(server => {
-              const ticks = serverStats[server.id!] || [];
-              return (
-                <div
-                  key={server.id}
-                  className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg p-5 cursor-pointer hover:border-gray-600 transition-colors"
-                  onClick={() => { setSelectedServer(server.id || null); navigate('/console'); }}
-                >
-                  <div className="flex justify-between items-center mb-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+        {[
+          [Cpu, 'CPU now', `${cpu.toFixed(1)}%`, 'text-blue-400'],
+          [MemoryStick, 'RAM now', `${Math.round(memory)} MB`, 'text-violet-400'],
+          [Activity, 'Peak RAM', `${Math.round(peakMemory)} MB`, 'text-amber-400'],
+          [Users, 'Players online', String(players), 'text-emerald-400'],
+          [Activity, 'Longest uptime', uptime, 'text-cyan-400'],
+        ].map(([Icon, label, value, color]: any) => (
+          <div key={label} className="rounded-lg border border-[#2a2b2f] bg-[#1c1d21] p-4">
+            <Icon size={18} className={color} />
+            <p className="mt-3 text-xs text-gray-500">{label}</p>
+            <p className="mt-1 text-xl font-semibold text-white">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        {/* Your Servers Section */}
+        <div className="lg:col-span-2">
+          <h2 className="text-xl font-bold text-white mb-4">Your Servers</h2>
+          {servers.length === 0 ? (
+            <EmptyState icon={Server} title="No servers yet" description="Create your first Minecraft server or import an existing installation." action="Create server" onAction={() => navigate('/wizard')} />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[...servers]
+                .sort((a, b) => {
+                  const getPriority = (status: string) => {
+                    if (status === 'online') return 0;
+                    if (status === 'starting') return 1;
+                    if (status === 'stopping') return 2;
+                    return 3;
+                  };
+                  return getPriority(a.status) - getPriority(b.status);
+                })
+                .map(server => (
+                  <div
+                    key={server.id}
+                    onClick={() => { setSelectedServer(server.id || null); navigate('/console'); }}
+                    className="bg-[#1c1d21] border border-[#2a2b2f] hover:border-[#34353a] rounded-lg p-5 flex flex-col justify-between cursor-pointer transition-colors"
+                  >
                     <div>
-                      <h3 className="font-bold text-white">{server.name}</h3>
-                      <p className="text-xs text-gray-500">{server.minecraft_version} · {server.server_type}</p>
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex min-w-0 items-center gap-3 pr-2">
+                          <img src={getSoftwareInfo(server.server_type).icon} alt="" className="h-7 w-7 shrink-0 rounded-md object-contain" />
+                          <h3 className="min-w-0 truncate font-bold text-white text-lg">{server.name}</h3>
+                        </div>
+                        <span className={cn(
+                          "px-2.5 py-0.5 text-xs font-semibold rounded-full",
+                          server.status === 'online' ? "bg-emerald-500/10 text-emerald-400" :
+                            server.status === 'starting' ? "bg-blue-500/10 text-blue-400" :
+                              server.status === 'stopping' ? "bg-red-500/10 text-red-400" :
+                                "bg-gray-500/10 text-gray-400"
+                        )}>
+                          {server.status.toUpperCase()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-400">{server.minecraft_version} · {getSoftwareInfo(server.server_type).name}</p>
                     </div>
-                    <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500/10 text-emerald-400">
-                      {server.status.toUpperCase()}
-                    </span>
                   </div>
-                  <div className="flex gap-6">
-                    <MiniChart data={ticks} color="blue" label="CPU" maxVal={100} />
-                    <MiniChart data={ticks} color="emerald" label="RAM" maxVal={server.ram_max} />
-                  </div>
-                  {ticks.length === 0 && (
-                    <p className="text-xs text-gray-600 mt-2 text-center">
-                      Collecting metrics... (updates every 2s)
-                    </p>
-                  )}
-                </div>
-              );
-            })}
+                ))}
+            </div>
+          )}
+        </div>
+
+        {/* System Status Section */}
+        <div>
+          <h2 className="text-xl font-bold text-white mb-4">Information</h2>
+          <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[#2a2b2f] text-sm font-semibold text-gray-300">
+                E
+              </div>
+              <div>
+                <h4 className="font-bold text-white text-base">empfi</h4>
+                <p className="text-xs text-gray-500">Local profile</p>
+              </div>
+            </div>
+            <div className="border-t border-[#2a2b2f] pt-4 space-y-2.5 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">System RAM</span>
+                <span className="text-gray-200">{sysMemory ? `${Math.round(sysMemory / 1024)} GB` : 'Loading...'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Relay Status</span>
+                <span className={settings?.tunnel_enabled ? 'text-emerald-400 font-semibold' : 'text-gray-500'}>{settings?.tunnel_enabled ? 'Enabled' : 'Disabled'}</span>
+              </div>
+            </div>
           </div>
         </div>
-      )}
+      </div>
 
     </div>
   );

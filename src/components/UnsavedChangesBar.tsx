@@ -53,7 +53,7 @@ export default function UnsavedChangesBar({ dirty, saving, onSave, onReset, save
         <button
           onClick={onSave}
           disabled={saving || saveDisabled}
-          className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+          className="action-button bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
         >
           {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
           {saving ? 'Saving...' : 'Save Changes'}

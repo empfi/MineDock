@@ -1,14 +1,15 @@
-mod database;
-mod models;
-mod process;
-mod downloader;
-mod files;
 mod backups;
 mod commands;
-mod worlds;
-pub mod tunnel;
+mod database;
 mod discord;
+mod downloader;
+mod files;
+mod models;
+mod paths;
 mod plugins;
+mod process;
+pub mod tunnel;
+mod worlds;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -26,10 +27,10 @@ pub fn run() {
             app.manage(database::DbState {
                 db: Mutex::new(conn),
             });
-            
+
             let process_manager = process::ProcessManager::new(app.handle().clone());
             app.manage(process_manager);
-            
+
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
             app.manage(discord::DiscordState { tx });
             discord::start_rpc_worker(rx);
@@ -57,6 +58,7 @@ pub fn run() {
             commands::save_settings,
             commands::start_mc_server,
             commands::stop_mc_server,
+            commands::kill_mc_server,
             commands::send_mc_command,
             commands::get_player_info,
             commands::get_player_names,
@@ -67,6 +69,7 @@ pub fn run() {
             commands::get_software_versions,
             commands::get_software_version_info,
             commands::download_software,
+            commands::install_loader,
             commands::get_directory_contents,
             commands::read_file_content,
             commands::get_log_summaries,
@@ -77,11 +80,16 @@ pub fn run() {
             commands::import_dropped_files,
             commands::create_mc_backup,
             commands::list_mc_backups,
+            commands::verify_mc_backup,
             commands::restore_mc_backup,
+            commands::restore_safe_apply_backup,
             commands::remove_mc_backup,
             commands::accept_eula,
             commands::get_system_memory,
+            commands::get_server_disk_usage,
             commands::detect_java_paths,
+            commands::get_java_major,
+            commands::install_managed_java,
             commands::delete_server_files,
             commands::update_server_version_info,
             commands::update_server_settings,

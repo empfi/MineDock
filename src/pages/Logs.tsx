@@ -37,7 +37,7 @@ function LogViewer({ content }: { content: string }) {
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col select-text" data-allow-context-menu>
       {remaining > 0 && (
         <div className="px-4 py-2 border-b border-[#2a2b2f] bg-[#101113] flex justify-between items-center mb-2">
           <span className="text-gray-500 text-xs font-sans">{remaining.toLocaleString()} older lines hidden</span>

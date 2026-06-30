@@ -119,7 +119,7 @@ export default function Players() {
   if (!server) return <div className="p-8 text-center text-gray-500">Select a server first.</div>;
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 w-full">
+    <div className="p-4 sm:p-6 lg:p-8 w-full flex flex-col h-full">
       <div className="mb-7">
         <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Players</h1>
         <p className="text-gray-400">{server.name} · {players.length} online</p>
@@ -154,7 +154,7 @@ export default function Players() {
           ))}
         </div>
       ) : (
-        <div className="border border-dashed border-[#2a2b2f] rounded-lg py-16 text-center text-gray-500">
+        <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-[#2a2b2f] rounded-lg text-center text-gray-500 py-16">
           <Users className="mx-auto mb-3 text-gray-700" />
           {players.length ? 'No matching players' : server.status === 'online' ? 'No players online' : 'Server offline'}
         </div>

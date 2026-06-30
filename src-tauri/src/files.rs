@@ -26,13 +26,15 @@ fn sanitize_path(base_dir: &str, requested_path: &str) -> Result<PathBuf, String
     if !base_path.exists() {
         return Err("Base directory does not exist".to_string());
     }
-    let base = base_path.canonicalize().map_err(|_| "Invalid base directory")?;
+    let base = base_path
+        .canonicalize()
+        .map_err(|_| "Invalid base directory")?;
     let req = Path::new(requested_path);
-    
+
     // We join the base with the requested, but we need to ensure it's safe
     // Since req could be absolute or have "..", we do a strict check
     let mut combined = base.clone();
-    
+
     // Iterate over components of requested_path safely
     for comp in req.components() {
         match comp {
@@ -41,20 +43,24 @@ fn sanitize_path(base_dir: &str, requested_path: &str) -> Result<PathBuf, String
                 if !combined.pop() {
                     return Err("Path traversal attempt detected".to_string());
                 }
-            },
-            std::path::Component::CurDir => {},
+            }
+            std::path::Component::CurDir => {}
             _ => return Err("Invalid path component".to_string()),
         }
     }
 
     // After resolution, check if it still starts with base
     let final_path = if combined.exists() {
-        combined.canonicalize().map_err(|_| "Failed to resolve path")?
+        combined
+            .canonicalize()
+            .map_err(|_| "Failed to resolve path")?
     } else {
         // If it doesn't exist yet (e.g. for creating files), we can't canonicalize it directly.
         // We can canonicalize the parent.
         if let Some(parent) = combined.parent() {
-            let p = parent.canonicalize().map_err(|_| "Failed to resolve parent path")?;
+            let p = parent
+                .canonicalize()
+                .map_err(|_| "Failed to resolve parent path")?;
             if !p.starts_with(&base) {
                 return Err("Path escapes base directory".to_string());
             }
@@ -71,17 +77,22 @@ fn sanitize_path(base_dir: &str, requested_path: &str) -> Result<PathBuf, String
 
 pub fn list_directory(base_dir: &str, sub_path: &str) -> Result<Vec<FileInfo>, String> {
     let full_path = sanitize_path(base_dir, sub_path)?;
-    
+
     let mut files = Vec::new();
     if full_path.is_dir() {
         let entries = fs::read_dir(full_path).map_err(|e| e.to_string())?;
         for entry in entries {
             if let Ok(entry) = entry {
-                if entry.file_name().to_string_lossy().starts_with(".minedock-") {
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".minedock-")
+                {
                     continue;
                 }
                 let metadata = entry.metadata().map_err(|e| e.to_string())?;
-                let modified = metadata.modified()
+                let modified = metadata
+                    .modified()
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                     .duration_since(std::time::SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -100,23 +111,21 @@ pub fn list_directory(base_dir: &str, sub_path: &str) -> Result<Vec<FileInfo>, S
     }
 
     // Sort: directories first, then alphabetically
-    files.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name))
-    });
+    files.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
 
     Ok(files)
 }
 
 pub fn read_text_file(base_dir: &str, sub_path: &str) -> Result<String, String> {
     let full_path = sanitize_path(base_dir, sub_path)?;
-    
+
     // basic size limit to prevent loading huge files (e.g. 5MB)
     if let Ok(meta) = fs::metadata(&full_path) {
         if meta.len() > 5 * 1024 * 1024 {
             return Err("File is too large to edit".to_string());
         }
     }
-    
+
     fs::read_to_string(full_path).map_err(|e| e.to_string())
 }
 
@@ -129,7 +138,8 @@ pub fn read_log_file(base_dir: &str, name: &str) -> Result<String, String> {
             .read_to_string(&mut content)
             .map_err(|e| e.to_string())?;
     } else {
-        fs::File::open(path).map_err(|e| e.to_string())?
+        fs::File::open(path)
+            .map_err(|e| e.to_string())?
             .take(5 * 1024 * 1024)
             .read_to_string(&mut content)
             .map_err(|e| e.to_string())?;
@@ -138,16 +148,21 @@ pub fn read_log_file(base_dir: &str, name: &str) -> Result<String, String> {
 }
 
 pub fn list_log_summaries(base_dir: &str) -> Result<Vec<LogSummary>, String> {
-    let cache_path = Path::new(base_dir).join("logs").join(".minedock-logs-cache.json");
-    let mut cache: std::collections::HashMap<String, LogSummary> = if let Ok(content) = fs::read_to_string(&cache_path) {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        std::collections::HashMap::new()
-    };
+    let cache_path = Path::new(base_dir)
+        .join("logs")
+        .join(".minedock-logs-cache.json");
+    let mut cache: std::collections::HashMap<String, LogSummary> =
+        if let Ok(content) = fs::read_to_string(&cache_path) {
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
 
     let files = list_directory(base_dir, "logs")?
         .into_iter()
-        .filter(|file| !file.is_dir && (file.name.ends_with(".log") || file.name.ends_with(".log.gz")))
+        .filter(|file| {
+            !file.is_dir && (file.name.ends_with(".log") || file.name.ends_with(".log.gz"))
+        })
         .collect::<Vec<_>>();
 
     let mut logs = Vec::with_capacity(files.len());
@@ -172,7 +187,11 @@ pub fn list_log_summaries(base_dir: &str) -> Result<Vec<LogSummary>, String> {
         };
         for line in content.lines() {
             let upper = line.to_ascii_uppercase();
-            if upper.contains("ERROR") || upper.contains("SEVERE") || upper.contains("FATAL") || upper.contains("EXCEPTION") {
+            if upper.contains("ERROR")
+                || upper.contains("SEVERE")
+                || upper.contains("FATAL")
+                || upper.contains("EXCEPTION")
+            {
                 summary.errors += 1;
             } else if upper.contains("WARN") {
                 summary.warnings += 1;
@@ -191,13 +210,16 @@ pub fn list_log_summaries(base_dir: &str) -> Result<Vec<LogSummary>, String> {
         }
     }
 
-    logs.sort_by(|a, b| {
-        match (a.name == "latest.log", b.name == "latest.log") {
+    logs.sort_by(
+        |a, b| match (a.name == "latest.log", b.name == "latest.log") {
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
-            _ => b.modified.cmp(&a.modified).then_with(|| b.name.cmp(&a.name)),
-        }
-    });
+            _ => b
+                .modified
+                .cmp(&a.modified)
+                .then_with(|| b.name.cmp(&a.name)),
+        },
+    );
 
     Ok(logs)
 }
@@ -210,7 +232,7 @@ pub fn write_text_file(base_dir: &str, sub_path: &str, content: &str) -> Result<
 pub fn delete_file(base_dir: &str, sub_path: &str) -> Result<(), String> {
     let full_path = sanitize_path(base_dir, sub_path)?;
     let meta = fs::metadata(&full_path).map_err(|e| e.to_string())?;
-    
+
     if meta.is_dir() {
         fs::remove_dir_all(full_path).map_err(|e| e.to_string())
     } else {
@@ -222,17 +244,26 @@ const PENDING_DELETES: &str = ".minedock-pending-deletes.json";
 
 pub fn delete_or_schedule(base_dir: &str, sub_path: &str) -> Result<bool, String> {
     let full_path = sanitize_path(base_dir, sub_path)?;
-    let result = if full_path.is_dir() { fs::remove_dir_all(&full_path) } else { fs::remove_file(&full_path) };
+    let result = if full_path.is_dir() {
+        fs::remove_dir_all(&full_path)
+    } else {
+        fs::remove_file(&full_path)
+    };
     match result {
         Ok(()) => Ok(false),
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             let queue_path = Path::new(base_dir).join(PENDING_DELETES);
             let mut queue: Vec<String> = fs::read_to_string(&queue_path)
-                .ok().and_then(|content| serde_json::from_str(&content).ok()).unwrap_or_default();
+                .ok()
+                .and_then(|content| serde_json::from_str(&content).ok())
+                .unwrap_or_default();
             if !queue.iter().any(|path| path == sub_path) {
                 queue.push(sub_path.to_string());
-                fs::write(queue_path, serde_json::to_string_pretty(&queue).map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?;
+                fs::write(
+                    queue_path,
+                    serde_json::to_string_pretty(&queue).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
             }
             Ok(true)
         }
@@ -243,8 +274,13 @@ pub fn delete_or_schedule(base_dir: &str, sub_path: &str) -> Result<bool, String
 pub fn apply_pending_deletes(base_dir: &str) {
     let queue_path = Path::new(base_dir).join(PENDING_DELETES);
     let queue: Vec<String> = fs::read_to_string(&queue_path)
-        .ok().and_then(|content| serde_json::from_str(&content).ok()).unwrap_or_default();
-    let remaining: Vec<String> = queue.into_iter().filter(|path| delete_file(base_dir, path).is_err()).collect();
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default();
+    let remaining: Vec<String> = queue
+        .into_iter()
+        .filter(|path| delete_file(base_dir, path).is_err())
+        .collect();
     if remaining.is_empty() {
         let _ = fs::remove_file(queue_path);
     } else if let Ok(content) = serde_json::to_string_pretty(&remaining) {
@@ -277,7 +313,10 @@ pub fn import_paths(base_dir: &str, sub_path: &str, paths: &[String]) -> Result<
         if source.is_dir() {
             for entry in walkdir::WalkDir::new(source) {
                 let entry = entry.map_err(|e| e.to_string())?;
-                let relative = entry.path().strip_prefix(source).map_err(|e| e.to_string())?;
+                let relative = entry
+                    .path()
+                    .strip_prefix(source)
+                    .map_err(|e| e.to_string())?;
                 let output = target.join(relative);
                 if entry.file_type().is_dir() {
                     fs::create_dir_all(output).map_err(|e| e.to_string())?;
@@ -305,7 +344,8 @@ mod tests {
 
     #[test]
     fn creates_missing_absolute_base_directory() {
-        let path = std::env::temp_dir().join(format!("minedock-create-folder-{}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("minedock-create-folder-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         create_folder(path.to_str().unwrap(), ".").unwrap();
         assert!(path.is_dir());
@@ -315,19 +355,32 @@ mod tests {
     #[test]
     fn imports_dropped_file() {
         let root = std::env::temp_dir().join(format!("minedock-import-{}", std::process::id()));
-        let source = std::env::temp_dir().join(format!("minedock-source-{}.txt", std::process::id()));
+        let source =
+            std::env::temp_dir().join(format!("minedock-source-{}.txt", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(&source, "test").unwrap();
-        assert_eq!(import_paths(root.to_str().unwrap(), ".", &[source.to_string_lossy().to_string()]).unwrap(), 1);
-        assert_eq!(std::fs::read_to_string(root.join(source.file_name().unwrap())).unwrap(), "test");
+        assert_eq!(
+            import_paths(
+                root.to_str().unwrap(),
+                ".",
+                &[source.to_string_lossy().to_string()]
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(source.file_name().unwrap())).unwrap(),
+            "test"
+        );
         std::fs::remove_file(source).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn applies_queued_delete_before_start() {
-        let root = std::env::temp_dir().join(format!("minedock-delete-queue-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("minedock-delete-queue-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("plugins")).unwrap();
         std::fs::write(root.join("plugins").join("old.jar"), "test").unwrap();

@@ -85,6 +85,7 @@ export default function Console() {
 
 
 
+
   useEffect(() => {
     if (autoScroll && consoleEndRef.current) {
       consoleEndRef.current.scrollIntoView();
@@ -207,11 +208,12 @@ export default function Console() {
         {/* Terminal View */}
         <div
           ref={consoleRef}
+          data-allow-context-menu
           onScroll={event => {
             const element = event.currentTarget;
             setShowScrollDown(element.scrollHeight - element.scrollTop - element.clientHeight > 48);
           }}
-          className="flex-1 bg-[#09090a] border border-[#2a2b2f] overflow-y-auto p-4 font-mono text-sm leading-relaxed"
+          className="flex-1 select-text bg-[#09090a] border border-[#2a2b2f] overflow-y-auto p-4 font-mono text-sm leading-relaxed"
         >
           {searchOpen && (
             <div className="sticky top-0 z-10 ml-auto mb-3 flex w-fit items-center gap-1 rounded-md border border-[#3a3b3f] bg-[#1c1d21] p-1 shadow-lg">

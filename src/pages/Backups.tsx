@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { Database, Plus, Trash2, RotateCcw, Loader2 } from 'lucide-react';
+import { Database, Plus, Trash2, RotateCcw, Loader2, ShieldCheck } from 'lucide-react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { notify } from '../components/Notifications';
+import EmptyState from '../components/EmptyState';
 
 interface BackupInfo { name: string; size: number; created_at: string; }
 
@@ -22,29 +22,12 @@ export default function Backups() {
   const actionInProgress = serverId != null ? backupJobs[serverId] : undefined;
 
   const [backups, setBackups] = useState<BackupInfo[]>([]);
-  const [progress, setProgress] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState<{ type: 'restore' | 'delete'; name: string } | null>(null);
-
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    
-    listen<number>('backup-progress', (event) => {
-      setProgress(event.payload);
-    }).then(fn => {
-      unlisten = fn;
-    });
-
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!actionInProgress) {
-      setProgress(null);
-    }
-  }, [actionInProgress]);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [newBackupName, setNewBackupName] = useState('');
+  const [verifying, setVerifying] = useState('');
+  const [verified, setVerified] = useState<Record<string, string>>({});
 
   // Use a ref to track the current load request so stale calls don't flip loading back on
   const loadingRef = useRef(false);
@@ -73,9 +56,15 @@ export default function Backups() {
     }
   }, [selectedServerId, revision]);
 
-  const handleCreate = async () => {
+  const startCreateBackup = () => {
+    setNewBackupName('');
+    setShowCreateDialog(true);
+  };
+
+  const handleConfirmCreate = async () => {
     if (!selectedServer || serverId == null) return;
-    try { await createBackup(serverId, selectedServer.install_path); }
+    setShowCreateDialog(false);
+    try { await createBackup(serverId, selectedServer.install_path, newBackupName); }
     catch (error) { notify('Failed to create backup: ' + error, 'error'); }
   };
 
@@ -108,6 +97,23 @@ export default function Backups() {
     catch (error) { notify('Failed to delete backup: ' + error, 'error'); }
   };
 
+  const verify = async (name: string) => {
+    if (!selectedServer) return;
+    setVerifying(name);
+    try {
+      const result = await invoke<{ files: number; uncompressed_size: number }>('verify_mc_backup', {
+        serverPath: selectedServer.install_path, backupName: name,
+      });
+      setVerified(current => ({ ...current, [name]: `${result.files} files · ${formatBytes(result.uncompressed_size)}` }));
+      notify('Backup verified.', 'success', false);
+    } catch (error) {
+      setVerified(current => ({ ...current, [name]: 'Invalid' }));
+      notify(`Backup verification failed: ${error}`, 'error');
+    } finally {
+      setVerifying('');
+    }
+  };
+
   if (!selectedServer) return <div className="p-8 text-center text-gray-500">Select a server from the sidebar.</div>;
 
   return (
@@ -118,27 +124,14 @@ export default function Backups() {
           <p className="text-gray-400">Manage server backups.</p>
         </div>
         <div className="flex items-center gap-4">
-          {actionInProgress && (
-            <div className="flex flex-col w-48 font-sans">
-              <div className="flex justify-between items-center text-xs mb-1 font-medium">
-                <span className="text-gray-400 truncate max-w-[120px]">{actionInProgress}</span>
-                <span className="text-blue-400 font-semibold">{progress !== null ? `${progress}%` : '0%'}</span>
-              </div>
-              <div className="w-full h-1.5 bg-[#2a2b2f] rounded-full overflow-hidden relative">
-                <div 
-                  className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out" 
-                  style={{ width: `${progress ?? 0}%` }}
-                />
-              </div>
-            </div>
-          )}
           <button
-            onClick={handleCreate}
+            onClick={startCreateBackup}
             disabled={!!actionInProgress}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50"
+            title={actionInProgress || 'Create a new backup'}
+            className="action-button bg-blue-600 px-4 py-2 font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
           >
             {actionInProgress ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-            Create Backup
+            <span>{actionInProgress ? actionInProgress.replace('...', '') : 'Create Backup'}</span>
           </button>
         </div>
       </div>
@@ -170,6 +163,7 @@ export default function Backups() {
                   <td className="px-6 py-4 font-medium text-white flex items-center gap-3">
                     <Database size={18} className="text-blue-400" />
                     {backup.name}
+                    {verified[backup.name] && <span className={verified[backup.name] === 'Invalid' ? 'text-xs text-red-400' : 'text-xs text-emerald-400'}>{verified[backup.name]}</span>}
                   </td>
                   <td className="px-6 py-4 text-gray-400">{formatBytes(backup.size)}</td>
                   <td className="px-6 py-4 text-gray-400 text-sm">
@@ -177,12 +171,17 @@ export default function Backups() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => verify(backup.name)} disabled={!!actionInProgress || verifying === backup.name} className="p-1.5 text-gray-500 hover:text-emerald-400 hover:bg-[#2a2b2f] rounded disabled:opacity-50" title="Verify backup">
+                        {verifying === backup.name ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                      </button>
                       <button
                         onClick={() => requestRestore(backup.name)}
                         disabled={!!actionInProgress || selectedServer.status !== 'offline'}
-                        className="flex items-center gap-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-gray-300 px-3 py-1.5 rounded text-sm disabled:opacity-50"
+                        title={actionInProgress || (selectedServer.status !== 'offline' ? 'Stop the server before restoring a backup' : 'Restore this backup')}
+                        className="action-button bg-[#2a2b2f] px-3 py-1.5 text-sm text-gray-300 hover:bg-[#3a3b3f] disabled:opacity-50"
+                        style={{ '--action-width': '6.75rem' } as React.CSSProperties}
                       >
-                        <RotateCcw size={14} /> Restore
+                        {actionInProgress?.startsWith('Restoring') ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} Restore
                       </button>
                       <button
                         onClick={() => requestDelete(backup.name)}
@@ -197,7 +196,7 @@ export default function Backups() {
               ))}
               {backups.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-6 py-12 text-center text-gray-500">No backups found.</td>
+                  <td colSpan={4} className="p-4"><EmptyState icon={Database} title="No backups yet" description="Create a restore point before changing versions, worlds, or additions." action="Create backup" onAction={startCreateBackup} /></td>
                 </tr>
               )}
             </tbody>
@@ -218,6 +217,45 @@ export default function Backups() {
           onCancel={() => setPending(null)}
           onConfirm={() => pending.type === 'restore' ? runRestore(pending.name) : runDelete(pending.name)}
         />
+      )}
+
+      {showCreateDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-lg border border-[#2a2b2f] bg-[#1c1d21] shadow-xl">
+            <div className="flex flex-col gap-3 p-5">
+              <h2 className="font-semibold text-white text-lg">Create Server Backup</h2>
+              <p className="text-sm text-gray-400">Specify a name for your backup, or leave it blank to auto-generate a timestamped name.</p>
+              <input
+                type="text"
+                autoFocus
+                placeholder="e.g. Before installing mods"
+                value={newBackupName}
+                onChange={e => setNewBackupName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleConfirmCreate();
+                  if (e.key === 'Escape') setShowCreateDialog(false);
+                }}
+                className="mt-2 w-full rounded border border-[#2a2b2f] bg-[#0f0f11] px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[#2a2b2f] bg-[#141517] p-4">
+              <button
+                type="button"
+                onClick={() => setShowCreateDialog(false)}
+                className="rounded-md bg-[#2a2b2f] px-4 py-2 text-sm text-white hover:bg-[#3a3b3f]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCreate}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
