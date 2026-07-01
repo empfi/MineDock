@@ -105,7 +105,7 @@ pub fn init_db(app: &AppHandle) -> Result<Connection> {
 
     // Reset any active statuses to offline
     conn.execute(
-        "UPDATE servers SET status = 'offline' WHERE status IN ('starting', 'online', 'stopping')",
+        "UPDATE servers SET status = 'offline' WHERE status IN ('starting', 'online', 'stopping', 'restarting')",
         [],
     )?;
 

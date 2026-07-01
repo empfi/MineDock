@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store';
-import { AlertTriangle, Server, Activity, Cpu, FolderX, MemoryStick, Users, Wrench } from 'lucide-react';
+import { AlertTriangle, Server, Activity, FolderX, Wrench } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import { cn } from '../lib/utils';
@@ -9,27 +9,16 @@ import { getSoftwareInfo } from '../lib/software';
 import EmptyState from '../components/EmptyState';
 
 export default function Overview() {
-  const { servers, setSelectedServer, serverStats, onlinePlayers, settings } = useStore();
+  const { servers, setSelectedServer, settings } = useStore();
   const navigate = useNavigate();
   const [sysMemory, setSysMemory] = useState<number | null>(null);
-  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     invoke<number>('get_system_memory').then(setSysMemory).catch(console.error);
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
   }, []);
 
   const runningServers = servers.filter(s => s.status === 'online' || s.status === 'starting');
   const totalServers = servers.length;
-  const activeStats = Object.entries(serverStats).flatMap(([id, ticks]) => ticks.slice(-1).map(tick => ({ ...tick, id: Number(id) })));
-  const cpu = activeStats.reduce((sum, tick) => sum + tick.cpu, 0);
-  const memory = activeStats.reduce((sum, tick) => sum + tick.memory, 0);
-  const peakMemory = Object.values(serverStats).flat().reduce((peak, tick) => Math.max(peak, tick.memory), 0);
-  const players = Object.values(onlinePlayers).reduce((sum, list) => sum + list.length, 0);
-  const oldestStart = runningServers.map(server => Date.parse(server.last_started_at || '')).filter(Number.isFinite).sort()[0];
-  const uptimeSeconds = oldestStart ? Math.max(0, Math.floor((now - oldestStart) / 1000)) : 0;
-  const uptime = `${Math.floor(uptimeSeconds / 3600)}h ${Math.floor((uptimeSeconds % 3600) / 60)}m`;
   const problems = servers.flatMap(server => {
     const items: { key: string; title: string; detail: string; action: string; run: () => void; icon: typeof AlertTriangle }[] = [];
     if (['crashed', 'crash-loop'].includes(server.status)) items.push({
@@ -97,22 +86,6 @@ export default function Overview() {
           </div>
           <p className="text-4xl font-bold text-white">{runningServers.length}</p>
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-        {[
-          [Cpu, 'CPU now', `${cpu.toFixed(1)}%`, 'text-blue-400'],
-          [MemoryStick, 'RAM now', `${Math.round(memory)} MB`, 'text-violet-400'],
-          [Activity, 'Peak RAM', `${Math.round(peakMemory)} MB`, 'text-amber-400'],
-          [Users, 'Players online', String(players), 'text-emerald-400'],
-          [Activity, 'Longest uptime', uptime, 'text-cyan-400'],
-        ].map(([Icon, label, value, color]: any) => (
-          <div key={label} className="rounded-lg border border-[#2a2b2f] bg-[#1c1d21] p-4">
-            <Icon size={18} className={color} />
-            <p className="mt-3 text-xs text-gray-500">{label}</p>
-            <p className="mt-1 text-xl font-semibold text-white">{value}</p>
-          </div>
-        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">

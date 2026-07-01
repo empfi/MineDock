@@ -4,7 +4,8 @@ use crate::backups::{
 };
 use crate::database::{
     add_server, delete_server, get_server, get_servers, get_settings, update_server_port,
-    update_server_profile, update_server_sharing, update_server_version, update_settings, DbState,
+    update_server_profile, update_server_sharing, update_server_status, update_server_version,
+    update_settings, DbState,
 };
 use crate::downloader::{
     download_server_jar, download_server_software, fetch_software_version_info,
@@ -27,7 +28,7 @@ use crate::worlds::{
     activate_world, create_world, delete_world, export_world, import_world, list_worlds,
     rename_world, WorldInfo,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[tauri::command]
 pub fn get_worlds(server_path: String) -> Result<Vec<WorldInfo>, String> {
@@ -503,11 +504,27 @@ pub fn save_settings(state: State<DbState>, settings: AppSettings) -> Result<(),
 
 #[tauri::command]
 pub async fn start_mc_server(
-    _app: AppHandle,
+    app: AppHandle,
     id: i64,
     process_manager: State<'_, ProcessManager>,
 ) -> Result<(), String> {
-    process_manager.start_server(id).await
+    let was_restarting = {
+        let state = app.state::<DbState>();
+        let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
+        get_server(&conn, id)
+            .map_err(|error| error.to_string())?
+            .is_some_and(|server| server.status == "restarting")
+    };
+    let result = process_manager.start_server(id).await;
+    if result.is_err() {
+        let fallback = if was_restarting { "crashed" } else { "offline" };
+        let state = app.state::<DbState>();
+        if let Ok(conn) = state.db.lock() {
+            let _ = update_server_status(&conn, id, fallback);
+        }
+        let _ = app.emit("server-status-changed", (id, fallback));
+    }
+    result
 }
 
 #[tauri::command]

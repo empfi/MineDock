@@ -172,8 +172,8 @@ function Sidebar() {
               >{serverAction === 'stop' ? <Loader2 size={16} className="animate-spin" /> : <Square size={16} />}</button>
               <button
                 onClick={() => runServerAction('kill')}
-                disabled={serverAction !== null || !selectedServer || ['offline', 'crashed', 'crash-loop'].includes(selectedServer.status)}
-                title="Kill server process (Force Stop)"
+                disabled={serverAction !== null || !selectedServer || ['offline', 'crashed', 'crash-loop', 'restarting'].includes(selectedServer.status)}
+                title={selectedServer?.status === 'restarting' ? 'Waiting for automatic restart' : 'Kill server process (Force Stop)'}
                 aria-label="Kill server process"
                 className="flex items-center justify-center py-2 rounded-md bg-rose-600/15 text-rose-400 hover:bg-rose-600/25 disabled:opacity-30 disabled:cursor-not-allowed"
               >{serverAction === 'kill' ? <Loader2 size={17} className="animate-spin" /> : <Skull size={17} />}</button>
@@ -213,7 +213,7 @@ function TitleBar() {
       <div data-tauri-drag-region className="flex-1 h-full" />
       
       <div className="flex items-center">
-        <button onClick={() => window.dispatchEvent(new Event('minedock:command-palette'))} className="mr-1 flex h-7 items-center gap-2 rounded-md border border-[#2a2b2f] px-2.5 text-xs text-gray-500 hover:bg-[#202124] hover:text-gray-200" title="Open command palette">
+        <button onClick={() => window.dispatchEvent(new Event('minedock:command-palette'))} className="mr-1 flex h-7 w-44 items-center gap-2 rounded-md border border-[#2a2b2f] px-2.5 text-xs text-gray-500 hover:bg-[#202124] hover:text-gray-200" title="Open command palette">
           <Search size={13} />
           <span>Search</span>
           <kbd className="text-[10px] text-gray-600">Ctrl K</kbd>
