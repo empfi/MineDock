@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, Copy, ListMinus, ListPlus, Search, ShieldCheck, ShieldOff, UserX, Users, X } from 'lucide-react';
 import { useStore } from '../store';
+import FieldError from '../components/FieldError';
 import { notify } from '../components/Notifications';
 
 type Action = 'kick' | 'ban' | 'unban';
@@ -32,6 +33,7 @@ export default function Players() {
   const [reason, setReason] = useState('');
   const [copied, setCopied] = useState('');
   const [error, setError] = useState('');
+  const usernameError = query.trim() && !/^[A-Za-z0-9_]{3,16}$/.test(query.trim()) ? 'Use a 3–16 character Minecraft username.' : '';
   const [info, setInfo] = useState<PlayerInfo | null>(null);
   const [searching, setSearching] = useState(false);
 
@@ -128,7 +130,8 @@ export default function Players() {
       <div className="flex max-w-2xl gap-2 mb-6">
         <label className="relative block flex-1">
           <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-          <input type="search" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && searchMinecraft()} placeholder="Search local or any Minecraft player" className="w-full bg-[#141517] border border-[#2a2b2f] rounded-md py-2.5 pl-10 pr-3 text-sm text-white outline-none focus:border-blue-500" />
+          <input type="search" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && searchMinecraft()} placeholder="Search local or any Minecraft player" aria-invalid={!!usernameError} aria-describedby="player-username-error" className="w-full bg-[#141517] border border-[#2a2b2f] rounded-md py-2.5 pl-10 pr-3 text-sm text-white outline-none focus:border-blue-500" />
+          <FieldError id="player-username-error" message={usernameError} />
         </label>
         <span title={!/^[A-Za-z0-9_]{3,16}$/.test(query.trim()) ? 'Enter a valid 3–16 character Minecraft username.' : 'Search Mojang player directory'} className="flex cursor-help">
           <button onClick={searchMinecraft} disabled={searching || !/^[A-Za-z0-9_]{3,16}$/.test(query.trim())} className="px-4 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-40 disabled:cursor-help">

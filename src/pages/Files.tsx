@@ -156,7 +156,6 @@ export default function Files() {
       const ext = file.name.split('.').pop()?.toLowerCase();
       const textExts = ['txt', 'json', 'yml', 'yaml', 'properties', 'log', 'sh', 'bat', 'xml', 'md', 'toml', 'conf', 'cfg'];
       if (!ext || !textExts.includes(ext)) {
-        notify('This file type cannot be edited.', 'warning');
         return;
       }
 

@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useStore } from './store';
-import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, PackageSearch, Skull, HeartPulse, Search } from 'lucide-react';
+import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, PackageSearch, Skull, HeartPulse, Search, Brain } from 'lucide-react';
 import { cn } from './lib/utils';
 
 import Notifications, { NotificationCenter } from './components/Notifications';
@@ -17,6 +17,7 @@ import SafeApplyModal from './components/SafeApplyModal';
 import { failArmedSafeApply, observeSafeApplyStatus } from './lib/safeApply';
 import { getSoftwareInfo } from './lib/software';
 import CommandPalette from './components/CommandPalette';
+import { confirmNavigation } from './lib/navigationGuard';
 function Sidebar() {
   const { servers, selectedServerId, setSelectedServer } = useStore();
   const selectedServer = servers.find(s => s.id === selectedServerId);
@@ -30,6 +31,7 @@ function Sidebar() {
     { to: "/", icon: Database, label: "Overview", exact: true },
     { to: "/servers", icon: Server, label: "Servers", exact: false },
     { to: "/settings", icon: Settings, label: "Settings", exact: false },
+    { to: "/assistant", icon: Brain, label: "DockAI", exact: false },
   ];
 
   const serverLinks = [
@@ -77,6 +79,7 @@ function Sidebar() {
   };
 
   const leaveServer = () => {
+    if (!confirmNavigation()) return;
     setSelectedServer(null);
     navigate('/servers');
   };
@@ -339,7 +342,7 @@ function Layout() {
       const [id, status] = event.payload;
       updateServerStatus(id, status);
       observeSafeApplyStatus(id, status);
-      const name = useStore.getState().servers.find(server => server.id === id)?.name ?? 'Host';
+      const name = useStore.getState().servers.find(server => server.id === id)?.name ?? 'Server';
       if (status === 'crashed') notify(`${name} crashed. Check the latest log for details.`, 'error');
       if (status === 'crash-loop') notify(`${name} restart loop stopped after repeated crashes.`, 'error');
       if (status === 'restarting') notify(`${name} crashed and is restarting.`, 'warning');
@@ -407,7 +410,7 @@ function Layout() {
             : undefined;
 
           await invoke('update_discord_rpc', {
-            details: `Hosting: ${runningServer.name}`,
+            details: `Running: ${runningServer.name}`,
             stateStr: `${runningServer.status === 'starting' ? 'Starting...' : 'Online'} (${runningServer.server_type})`,
             playersCur,
             installPath: runningServer.install_path,
@@ -469,7 +472,7 @@ function Layout() {
                           setDraggedTab(index);
                         }
                       }}
-                      onClick={() => setSelectedServer(id)}
+                      onClick={() => { if (confirmNavigation()) setSelectedServer(id); }}
                       onAuxClick={event => {
                         if (event.button === 1) closeTab(id);
                       }}
@@ -489,7 +492,7 @@ function Layout() {
                         onPointerDown={event => event.stopPropagation()}
                         onClick={event => {
                           event.stopPropagation();
-                          closeTab(id);
+                          if (confirmNavigation()) closeTab(id);
                         }}
                         className="rounded p-0.5 text-gray-600 hover:bg-[#34353a] hover:text-white"
                       ><X size={13} /></span>
@@ -515,7 +518,7 @@ function Layout() {
                       autoFocus
                       value={serverSearch}
                       onChange={event => setServerSearch(event.target.value)}
-                      placeholder="Search hosts..."
+                      placeholder="Search servers..."
                       className="w-full rounded border border-[#2a2b2f] bg-[#0f0f11] px-2.5 py-1.5 text-sm text-white outline-none placeholder:text-gray-600 focus:border-blue-500"
                     />
                   </div>
@@ -527,6 +530,7 @@ function Layout() {
                     <button
                       key={server.id}
                       onClick={() => {
+                        if (!confirmNavigation()) return;
                         setSelectedServer(server.id!);
                         setServerPickerOpen(false);
                         setServerSearch('');
@@ -542,7 +546,7 @@ function Layout() {
                     !openServerIds.includes(server.id) &&
                     server.name.toLowerCase().includes(serverSearch.toLowerCase())
                   ) && (
-                    <div className="px-3 py-2 text-sm text-gray-600">{serverSearch ? 'No matching hosts' : 'All hosts are open'}</div>
+                    <div className="px-3 py-2 text-sm text-gray-600">{serverSearch ? 'No matching servers' : 'All servers are open'}</div>
                   )}
                 </div>
               )}

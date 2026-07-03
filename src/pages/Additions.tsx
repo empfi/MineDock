@@ -117,14 +117,14 @@ export default function Additions() {
     const src = plugin.source;
     const id = plugin.project_id || plugin.id;
     if (!src || !id) return;
-    
+
     let url = '';
     if (src === 'Modrinth') {
       url = `https://modrinth.com/project/${id}`;
     } else if (src === 'Hangar') {
       url = `https://hangar.papermc.io/${id}`;
     }
-    
+
     if (url) {
       try {
         const { openUrl } = await import('@tauri-apps/plugin-opener');
@@ -199,7 +199,7 @@ export default function Additions() {
           }
         },
       });
-      notify(`${plugin.name} ${replaceFile ? 'updated' : 'installed'}. Restart host to load it.`, 'success');
+      notify(`${plugin.name} ${replaceFile ? 'updated' : 'installed'}. Restart the server to load it.`, 'success');
       reportInstall({ id: key, name: plugin.name, state: 'done' });
       updateChecks.delete(server.install_path);
     } catch (error) {
@@ -226,7 +226,7 @@ export default function Additions() {
     if (tab === 'marketplace' && results.length === 0) search('', 0, projectType);
   }, [tab, selectedServerId, server?.install_path, projectType]);
 
-  if (!server) return <div className="p-8 text-center text-gray-500">Select a host first.</div>;
+  if (!server) return <div className="p-8 text-center text-gray-500">Select a server first.</div>;
   const unsupported = server.server_type === 'vanilla';
   if (unsupported) {
     return (
@@ -259,7 +259,7 @@ export default function Additions() {
             <Search className="absolute left-3 top-2.5 text-gray-600" size={17} />
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search plugins..." className="w-full rounded-md border border-[#2a2b2f] bg-[#0f0f11] py-2 pl-10 pr-3 text-white outline-none focus:border-blue-500" />
           </div>
-          
+
           <div className="flex items-center gap-1 bg-[#0f0f11] p-1 rounded-lg border border-[#2a2b2f]">
             {(['plugin', 'mod', 'modpack'] as const).map(ptype => (
               <button
@@ -270,11 +270,10 @@ export default function Additions() {
                   setPage(0);
                   search(query, 0, ptype);
                 }}
-                className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-md capitalize transition-all ${
-                  projectType === ptype
+                className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-md capitalize transition-all ${projectType === ptype
                     ? 'bg-blue-600 text-white shadow-sm'
                     : 'text-gray-400 hover:text-white hover:bg-[#1c1d21]'
-                }`}
+                  }`}
               >
                 <span>{ptype === 'plugin' ? 'Plugins' : ptype === 'mod' ? 'Mods' : 'Modpacks'}</span>
               </button>
@@ -285,47 +284,47 @@ export default function Additions() {
         </form>
       )}
       <div className="flex-1 overflow-y-auto rounded-lg border border-[#2a2b2f] bg-[#1c1d21]">
-        {loading ? <div className="grid gap-3 p-4 md:grid-cols-2">{[1,2,3,4].map(item => <div key={item} className="h-28 animate-pulse rounded-md bg-[#25262a]" />)}</div> :
-        tab === 'installed' ? (
-          installed.length ? <div className="divide-y divide-[#2a2b2f]">{installed.map(plugin => (
-            <div key={plugin.file_name} className="flex items-center gap-4 p-4">
-              {plugin.icon_url ? <img src={plugin.icon_url} alt="" className="h-9 w-9 rounded-md object-cover" /> : <div className="rounded-md bg-[#292a2f] p-2 text-blue-400"><Package size={20} /></div>}
-              <div
-                onClick={() => plugin.source && plugin.project_id && openWebsite(plugin)}
-                className={`min-w-0 flex-1 ${plugin.source && plugin.project_id ? 'cursor-pointer hover:underline' : ''}`}
-              >
-                <div className="font-semibold text-white">{plugin.name} <span className="ml-2 text-xs font-normal text-gray-600">{plugin.version}</span>{plugin.update_available && <span className="ml-2 rounded bg-blue-500/10 px-2 py-0.5 text-xs font-normal text-blue-400">Update {plugin.latest_version}</span>}</div>
-                <div className="truncate text-sm text-gray-500">{plugin.description || plugin.file_name}</div>
+        {loading ? <div className="grid gap-3 p-4 md:grid-cols-2">{[1, 2, 3, 4].map(item => <div key={item} className="h-28 animate-pulse rounded-md bg-[#25262a]" />)}</div> :
+          tab === 'installed' ? (
+            installed.length ? <div className="divide-y divide-[#2a2b2f]">{installed.map(plugin => (
+              <div key={plugin.file_name} className="flex items-center gap-4 p-4">
+                {plugin.icon_url ? <img src={plugin.icon_url} alt="" className="h-9 w-9 rounded-md object-cover" /> : <div className="rounded-md bg-[#292a2f] p-2 text-blue-400"><Package size={20} /></div>}
+                <div
+                  onClick={() => plugin.source && plugin.project_id && openWebsite(plugin)}
+                  className={`min-w-0 flex-1 ${plugin.source && plugin.project_id ? 'cursor-pointer hover:underline' : ''}`}
+                >
+                  <div className="font-semibold text-white">{plugin.name} <span className="ml-2 text-xs font-normal text-gray-600">{plugin.version}</span>{plugin.update_available && <span className="ml-2 rounded bg-blue-500/10 px-2 py-0.5 text-xs font-normal text-blue-400">Update {plugin.latest_version}</span>}</div>
+                  <div className="truncate text-sm text-gray-500">{plugin.description || plugin.file_name}</div>
+                </div>
+                <button title={!plugin.project_id ? 'Marketplace source could not be identified' : unsupported ? 'This server type cannot load additions' : 'Choose a version to install'} onClick={() => openUpdate(plugin)} disabled={pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) || unsupported || !plugin.project_id} className="action-button bg-[#2a2b2f] px-3 py-2 text-sm text-gray-200 hover:bg-[#34353a] disabled:opacity-30" style={{ '--action-width': '6.5rem' } as React.CSSProperties}>{pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) ? <Loader2 className="animate-spin" size={15} /> : <RefreshCw size={15} />} {pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) ? 'Updating' : 'Update'}</button>
+                <button onClick={async () => { await invoke('toggle_plugin', { serverPath: server.install_path, fileName: plugin.file_name, enabled: !plugin.enabled }); loadInstalled(); }} className={`relative h-5 w-9 rounded-full ${plugin.enabled ? 'bg-blue-600' : 'bg-[#34353a]'}`}><span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${plugin.enabled ? 'translate-x-4' : ''}`} /></button>
+                <button onClick={async () => { await invoke('delete_plugin', { serverPath: server.install_path, fileName: plugin.file_name }); setInstalled(items => items.filter(item => item.file_name !== plugin.file_name)); }} className="rounded p-2 text-gray-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 size={17} /></button>
               </div>
-              <button title={!plugin.project_id ? 'Marketplace source could not be identified' : unsupported ? 'This server type cannot load additions' : 'Choose a version to install'} onClick={() => openUpdate(plugin)} disabled={pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) || unsupported || !plugin.project_id} className="action-button bg-[#2a2b2f] px-3 py-2 text-sm text-gray-200 hover:bg-[#34353a] disabled:opacity-30" style={{ '--action-width': '6.5rem' } as React.CSSProperties}>{pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) ? <Loader2 className="animate-spin" size={15} /> : <RefreshCw size={15} />} {pluginBusy.includes(`${plugin.source}:${plugin.project_id}`) ? 'Updating' : 'Update'}</button>
-              <button onClick={async () => { await invoke('toggle_plugin', { serverPath: server.install_path, fileName: plugin.file_name, enabled: !plugin.enabled }); loadInstalled(); }} className={`relative h-5 w-9 rounded-full ${plugin.enabled ? 'bg-blue-600' : 'bg-[#34353a]'}`}><span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${plugin.enabled ? 'translate-x-4' : ''}`} /></button>
-              <button onClick={async () => { await invoke('delete_plugin', { serverPath: server.install_path, fileName: plugin.file_name }); setInstalled(items => items.filter(item => item.file_name !== plugin.file_name)); }} className="rounded p-2 text-gray-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 size={17} /></button>
-            </div>
-          ))}</div> : <div className="py-16 text-center text-gray-600">No plugins installed.</div>
-        ) : results.length ? <div className="grid gap-3 p-4 md:grid-cols-2">{results.map(plugin => (
-          <div
-            key={`${plugin.source}:${plugin.id}`}
-            onClick={() => openWebsite(plugin)}
-            className="flex gap-3 rounded-md border border-[#2a2b2f] bg-[#18191c] p-4 cursor-pointer hover:border-gray-500 hover:bg-[#202124] transition-all"
-          >
-            {plugin.icon_url ? <img src={plugin.icon_url} alt="" className="h-12 w-12 rounded-md object-cover" /> : <div className="h-12 w-12 rounded-md bg-[#292a2f]" />}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate font-semibold text-white">{plugin.name}</span>
-                <span className="rounded bg-[#292a2f] px-1.5 py-0.5 text-[10px] text-gray-500">{plugin.source}</span>
-              </div>
-              <p className="mt-1 line-clamp-2 text-xs text-gray-500">{plugin.description}</p>
-              <div className="mt-2 text-xs text-gray-600">{plugin.downloads.toLocaleString()} downloads</div>
-            </div>
-            <button
-              onClick={(e) => { e.stopPropagation(); install(plugin); }}
-              disabled={pluginBusy.includes(`${plugin.source}:${plugin.id}`) || unsupported}
-              className="self-center rounded-md bg-blue-600 p-2 text-white disabled:opacity-40 hover:bg-blue-700"
+            ))}</div> : <div className="py-16 text-center text-gray-600">No plugins installed.</div>
+          ) : results.length ? <div className="grid gap-3 p-4 md:grid-cols-2">{results.map(plugin => (
+            <div
+              key={`${plugin.source}:${plugin.id}`}
+              onClick={() => openWebsite(plugin)}
+              className="flex gap-3 rounded-md border border-[#2a2b2f] bg-[#18191c] p-4 cursor-pointer hover:border-gray-500 hover:bg-[#202124] transition-all"
             >
-              {pluginBusy.includes(`${plugin.source}:${plugin.id}`) ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
-            </button>
-          </div>
-        ))}</div> : <div className="py-16 text-center text-gray-600">{busy === 'search' ? 'Loading recommendations...' : 'No compatible plugins found.'}</div>}
+              {plugin.icon_url ? <img src={plugin.icon_url} alt="" className="h-12 w-12 rounded-md object-cover" /> : <div className="h-12 w-12 rounded-md bg-[#292a2f]" />}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-semibold text-white">{plugin.name}</span>
+                  <span className="rounded bg-[#292a2f] px-1.5 py-0.5 text-[10px] text-gray-500">{plugin.source}</span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-xs text-gray-500">{plugin.description}</p>
+                <div className="mt-2 text-xs text-gray-600">{plugin.downloads.toLocaleString()} downloads</div>
+              </div>
+              <button
+                onClick={(e) => { e.stopPropagation(); install(plugin); }}
+                disabled={pluginBusy.includes(`${plugin.source}:${plugin.id}`) || unsupported}
+                className="self-center rounded-md bg-blue-600 p-2 text-white disabled:opacity-40 hover:bg-blue-700"
+              >
+                {pluginBusy.includes(`${plugin.source}:${plugin.id}`) ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
+              </button>
+            </div>
+          ))}</div> : <div className="py-16 text-center text-gray-600">{busy === 'search' ? 'Loading recommendations...' : 'No compatible plugins found.'}</div>}
       </div>
       {tab === 'marketplace' && results.length > 0 && <div className="mt-4 flex items-center justify-center gap-3">
         <button onClick={() => { const next = Math.max(0, page - 1); setPage(next); search(query, next); }} disabled={page === 0 || busy === 'search'} className="rounded-md bg-[#2a2b2f] p-2 text-gray-300 disabled:opacity-30"><ChevronLeft size={17} /></button>

@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AlertCircle, AlertTriangle, ChevronDown, FileText, Info, Loader2, RefreshCw } from 'lucide-react';
 import { useStore } from '../store';
+import ErrorState from '../components/ErrorState';
+import EmptyState from '../components/EmptyState';
+import { ListSkeleton } from '../components/LoadingState';
 
 type LogSummary = {
   name: string;
@@ -75,6 +78,8 @@ export default function Logs() {
   const [contents, setContents] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [query, setQuery] = useState(() => localStorage.getItem('minedock:logs_query') || '');
+  const [level, setLevel] = useState(() => localStorage.getItem('minedock:logs_level') || 'all');
 
   const loadLogs = async () => {
     if (!server) return;
@@ -102,6 +107,7 @@ export default function Logs() {
   }, [openLog, server?.install_path]);
 
   if (!server) return <div className="p-8 text-center text-gray-500">Select a server from the sidebar.</div>;
+  const filteredLogs = logs.filter(log => log.name.toLowerCase().includes(query.toLowerCase()) && (level === 'all' || (level === 'errors' ? log.errors > 0 : log.warnings > 0)));
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 w-full">
@@ -115,13 +121,19 @@ export default function Logs() {
         </button>
       </div>
 
-      {error && <div className="mb-4 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-md text-sm">{error}</div>}
+      <div className="mb-4 flex items-center gap-2">
+        <input value={query} onChange={event => { setQuery(event.target.value); localStorage.setItem('minedock:logs_query', event.target.value); }} placeholder="Search log files…" className="flex-1 rounded-md border border-[#2a2b2f] bg-[#141517] px-3 py-2 text-sm text-white outline-none focus:border-blue-500" />
+        <select value={level} onChange={event => { setLevel(event.target.value); localStorage.setItem('minedock:logs_level', event.target.value); }} className="rounded-md border border-[#2a2b2f] bg-[#141517] px-3 py-2 text-sm text-gray-300"><option value="all">All levels</option><option value="warnings">With warnings</option><option value="errors">With errors</option></select>
+        <span className="min-w-20 text-right text-xs text-gray-500">{filteredLogs.length} results</span>
+      </div>
 
       {loading && !logs.length ? (
-        <div className="py-20 flex justify-center text-gray-500"><Loader2 className="animate-spin" /></div>
-      ) : logs.length ? (
+        <ListSkeleton />
+      ) : error ? (
+        <ErrorState title="Could not load logs" description="MineDock could not read this server’s log directory." details={error} primaryAction={{ label: 'Retry', onClick: loadLogs }} />
+      ) : filteredLogs.length ? (
         <div className="space-y-3">
-          {logs.slice(0, visibleLogCount).map(log => {
+          {filteredLogs.slice(0, visibleLogCount).map(log => {
             const open = openLog === log.name;
             const content = contents[log.name];
             return (
@@ -153,19 +165,19 @@ export default function Logs() {
             );
           })}
 
-          {logs.length > visibleLogCount && (
+          {filteredLogs.length > visibleLogCount && (
             <div className="flex justify-center pt-4">
               <button
                 onClick={() => setVisibleLogCount(prev => prev + 15)}
                 className="bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-5 py-2.5 rounded-md font-sans text-sm font-medium transition-colors border border-[#2a2b2f]"
               >
-                Load more archived logs ({logs.length - visibleLogCount} remaining)
+                Load more archived logs ({filteredLogs.length - visibleLogCount} remaining)
               </button>
             </div>
           )}
         </div>
       ) : (
-        <div className="border border-dashed border-[#2a2b2f] rounded-lg py-16 text-center text-gray-500">No logs found.</div>
+        <EmptyState icon={FileText} title={logs.length ? 'No matching logs' : 'No logs yet'} description={logs.length ? 'Clear the search or level filter.' : 'Logs appear after the server starts.'} action={logs.length ? 'Clear filters' : undefined} onAction={logs.length ? () => { setQuery(''); setLevel('all'); } : undefined} />
       )}
     </div>
   );

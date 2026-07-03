@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Activity, Database, Download, FolderGit2, Globe2, HeartPulse, PackageSearch, Plus, Save, Search, Server, Settings, Terminal, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { Activity, Database, Download, FolderGit2, Globe2, HeartPulse, PackageSearch, Play, Plus, RotateCw, Save, Search, Server, Settings, Square, Terminal, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { getSoftwareInfo } from '../lib/software';
+import { confirmNavigation } from '../lib/navigationGuard';
+import { notify } from './Notifications';
 
 const pages = [
   ['Overview', '/', Database], ['Servers', '/servers', Server], ['Settings', '/settings', Settings],
@@ -14,8 +17,11 @@ const pages = [
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const { servers, setSelectedServer } = useStore();
+  const [active, setActive] = useState(0);
+  const rows = useRef(new Map<number, HTMLButtonElement>());
+  const { servers, selectedServerId, setSelectedServer, createBackup } = useStore();
   const navigate = useNavigate();
+  const selected = servers.find(server => server.id === selectedServerId);
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -36,17 +42,54 @@ export default function CommandPalette() {
 
   const items = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    const navigateTo = (path: string) => { if (confirmNavigation()) navigate(path); };
+    const serverAction = async (action: 'start' | 'stop' | 'restart') => {
+      if (!selected?.id) return;
+      try {
+        if (action === 'start') await invoke('start_mc_server', { id: selected.id });
+        else {
+          await invoke('stop_mc_server', { id: selected.id });
+          if (action === 'restart') {
+            for (let attempt = 0; attempt < 30; attempt++) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              if (useStore.getState().servers.find(server => server.id === selected.id)?.status === 'offline') {
+                await invoke('start_mc_server', { id: selected.id });
+                break;
+              }
+            }
+          }
+        }
+      } catch (error) { notify(`Failed to ${action} server: ${error}`, 'error'); }
+    };
     return [
-      { label: 'Create new server', detail: 'Action', icon: Plus, run: () => navigate('/wizard') },
-      ...pages.map(([label, path, icon]) => ({ label, detail: 'Page', icon, run: () => navigate(path) })),
+      { label: 'Create new server', detail: 'Action', icon: Plus, run: () => navigateTo('/wizard'), disabled: false },
+      ...(selected ? [
+        { label: 'Start server', detail: selected.name, icon: Play, run: () => serverAction('start'), disabled: !['offline', 'crashed', 'crash-loop'].includes(selected.status) },
+        { label: 'Stop server', detail: selected.name, icon: Square, run: () => serverAction('stop'), disabled: selected.status !== 'online' },
+        { label: 'Restart server', detail: selected.name, icon: RotateCw, run: () => serverAction('restart'), disabled: selected.status !== 'online' },
+        { label: 'Create backup', detail: selected.name, icon: Database, run: () => createBackup(selected.id!, selected.install_path), disabled: false },
+      ] : []),
+      ...pages.map(([label, path, icon]) => ({ label, detail: 'Page', icon, run: () => navigateTo(path), disabled: false })),
       ...servers.map(server => ({
         label: server.name,
         detail: `${getSoftwareInfo(server.server_type).name} ${server.minecraft_version}`,
         icon: Server,
-        run: () => { setSelectedServer(server.id ?? null); navigate('/console'); },
+        run: () => { if (confirmNavigation()) { setSelectedServer(server.id ?? null); navigate('/console'); } },
+        disabled: false,
       })),
     ].filter(item => !needle || `${item.label} ${item.detail}`.toLowerCase().includes(needle));
-  }, [navigate, query, servers, setSelectedServer]);
+  }, [createBackup, navigate, query, selected, servers, setSelectedServer]);
+
+  useEffect(() => { setActive(0); }, [query, items.length]);
+  useEffect(() => { rows.current.get(active)?.scrollIntoView({ block: 'nearest' }); }, [active]);
+  const run = (index: number) => {
+    const item = items[index];
+    if (!item || item.disabled) return;
+    void item.run();
+    localStorage.setItem('minedock:recent_commands', JSON.stringify([item.label, ...JSON.parse(localStorage.getItem('minedock:recent_commands') || '[]').filter((label: string) => label !== item.label)].slice(0, 5)));
+    setOpen(false);
+    setQuery('');
+  };
 
   if (!open) return null;
   return (
@@ -55,16 +98,16 @@ export default function CommandPalette() {
         <div className="flex items-center gap-3 border-b border-[#2a2b2f] px-4">
           <Search size={18} className="text-gray-500" />
           <input autoFocus value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => {
-            if (event.key === 'Enter' && items[0]) {
-              items[0].run();
-              setOpen(false);
-              setQuery('');
-            }
+            if (event.key === 'ArrowDown') { event.preventDefault(); setActive(value => (value + 1) % items.length); }
+            if (event.key === 'ArrowUp') { event.preventDefault(); setActive(value => (value - 1 + items.length) % items.length); }
+            if (event.key === 'Home') { event.preventDefault(); setActive(0); }
+            if (event.key === 'End') { event.preventDefault(); setActive(Math.max(0, items.length - 1)); }
+            if (event.key === 'Enter') { event.preventDefault(); run(active); }
           }} placeholder="Search pages, servers, and actions…" className="command-palette-input h-14 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-gray-600" />
           <kbd className="rounded border border-[#34353a] px-1.5 py-0.5 text-[10px] text-gray-500">ESC</kbd>
         </div>
         <div className="max-h-96 overflow-y-auto p-2">
-          {items.length ? items.map((item, index) => <button key={`${item.detail}:${item.label}`} onClick={() => { item.run(); setOpen(false); setQuery(''); }} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left hover:bg-[#292a2f]">
+          {items.length ? items.map((item, index) => <button ref={element => { if (element) rows.current.set(index, element); else rows.current.delete(index); }} role="option" aria-selected={active === index} disabled={item.disabled} key={`${item.detail}:${item.label}`} onMouseEnter={() => setActive(index)} onClick={() => run(index)} className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left disabled:opacity-35 ${active === index ? 'bg-[#292a2f]' : 'hover:bg-[#25262a]'}`}>
             <item.icon size={17} className={index === 0 ? 'text-blue-400' : 'text-gray-500'} />
             <span className="min-w-0 flex-1 truncate text-sm text-gray-200">{item.label}</span>
             <span className="text-xs text-gray-600">{item.detail}</span>

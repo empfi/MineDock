@@ -42,7 +42,7 @@ export default function GuidedTour() {
   const steps: Step[] = [
     {
       target: '#tour-servers-tab',
-      content: 'Welcome to MineDock! To get started, click the Servers tab to view your hosts.',
+      content: 'Welcome to MineDock! To get started, click the Servers tab to view your servers.',
       skipBeacon: true,
       skipScroll: true,
       buttons: ['skip'],

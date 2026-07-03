@@ -360,7 +360,9 @@ async fn enrich_from_hangar(
             plugin.icon_url = project["avatarUrl"].as_str().map(str::to_owned);
             plugin.source = Some("Hangar".into());
             plugin.project_id = Some(id.clone());
-            if let Ok(download) = resolve_download("Hangar", &id, minecraft, None, "plugin", "paper").await {
+            if let Ok(download) =
+                resolve_download("Hangar", &id, minecraft, None, "plugin", "paper").await
+            {
                 plugin.latest_version = Some(download.version.clone());
                 plugin.update_available = is_update_available(&plugin.version, &download.version);
             }
@@ -405,8 +407,14 @@ pub async fn stream_plugin_updates(
     };
     let game_versions = serde_json::json!([minecraft]).to_string();
     for plugin in &mut plugins {
-        let plugin_path = Path::new(&server_path).join("plugins").join(&plugin.file_name);
-        let path = if plugin_path.exists() { plugin_path } else { Path::new(&server_path).join("mods").join(&plugin.file_name) };
+        let plugin_path = Path::new(&server_path)
+            .join("plugins")
+            .join(&plugin.file_name);
+        let path = if plugin_path.exists() {
+            plugin_path
+        } else {
+            Path::new(&server_path).join("mods").join(&plugin.file_name)
+        };
         *plugin = tokio::task::spawn_blocking(move || inspect_plugin(&path))
             .await
             .map_err(|e| e.to_string())?;
@@ -609,20 +617,65 @@ pub async fn search_marketplace(
         if let Ok(response) = hangar_res {
             if let Ok(data) = response.json::<serde_json::Value>().await {
                 if let Some(result) = data["result"].as_array() {
-                    for project in result {
-                        if let (Some(owner), Some(slug), Some(name)) = (
-                            project["namespace"]["owner"].as_str(),
-                            project["namespace"]["slug"].as_str(),
-                            project["name"].as_str(),
-                        ) {
-                            results.push(MarketplacePlugin {
-                                source: "Hangar".into(),
-                                id: format!("{owner}/{slug}"),
-                                name: name.into(),
-                                description: project["description"].as_str().unwrap_or("").into(),
-                                icon_url: project["avatarUrl"].as_str().map(str::to_owned),
-                                downloads: project["stats"]["downloads"].as_u64().unwrap_or(0),
-                            });
+                    let client_clone = client.clone();
+                    let minecraft_clone = minecraft.to_string();
+                    let checks = result.iter().map(|project| {
+                        let client = client_clone.clone();
+                        let minecraft = minecraft_clone.clone();
+                        let owner = project["namespace"]["owner"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        let slug = project["namespace"]["slug"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        async move {
+                            if owner.is_empty() || slug.is_empty() {
+                                return None;
+                            }
+                            let id = format!("{owner}/{slug}");
+                            let url =
+                                format!("https://hangar.papermc.io/api/v1/projects/{id}/versions");
+                            let resp = client
+                                .get(&url)
+                                .query(&[
+                                    ("limit", "1"),
+                                    ("platform", "PAPER"),
+                                    ("platformVersion", &minecraft),
+                                ])
+                                .send()
+                                .await
+                                .ok()?;
+                            let data = resp.json::<serde_json::Value>().await.ok()?;
+                            let items = data["result"].as_array()?;
+                            if items.is_empty() {
+                                None
+                            } else {
+                                Some(project.clone())
+                            }
+                        }
+                    });
+                    let filtered_projects = futures::future::join_all(checks).await;
+                    for project_opt in filtered_projects {
+                        if let Some(project) = project_opt {
+                            if let (Some(owner), Some(slug), Some(name)) = (
+                                project["namespace"]["owner"].as_str(),
+                                project["namespace"]["slug"].as_str(),
+                                project["name"].as_str(),
+                            ) {
+                                results.push(MarketplacePlugin {
+                                    source: "Hangar".into(),
+                                    id: format!("{owner}/{slug}"),
+                                    name: name.into(),
+                                    description: project["description"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .into(),
+                                    icon_url: project["avatarUrl"].as_str().map(str::to_owned),
+                                    downloads: project["stats"]["downloads"].as_u64().unwrap_or(0),
+                                });
+                            }
                         }
                     }
                 }
@@ -803,12 +856,18 @@ pub async fn resolve_download(
                 .as_str()
                 .unwrap_or("Unknown")
                 .into(),
-            dependencies: version["dependencies"].as_array().into_iter().flatten()
+            dependencies: version["dependencies"]
+                .as_array()
+                .into_iter()
+                .flatten()
                 .filter(|dependency| dependency["dependency_type"] == "required")
-                .filter_map(|dependency| Some((
-                    dependency["project_id"].as_str()?.to_string(),
-                    dependency["version_id"].as_str().map(str::to_string),
-                ))).collect(),
+                .filter_map(|dependency| {
+                    Some((
+                        dependency["project_id"].as_str()?.to_string(),
+                        dependency["version_id"].as_str().map(str::to_string),
+                    ))
+                })
+                .collect(),
         });
     }
     let data: serde_json::Value = client
@@ -833,15 +892,148 @@ pub async fn resolve_download(
         .or_else(|| items.first())
         .ok_or("No compatible Hangar version found")?;
     let download = &version["downloads"]["PAPER"];
+    let url_raw = download["downloadUrl"]
+        .as_str()
+        .or_else(|| download["externalUrl"].as_str())
+        .ok_or("This Hangar release does not have a download URL")?;
+
+    let mut url = url_raw.to_string();
+    let mut resolved_filename = None;
+
+    if url.contains("modrinth.com") {
+        let parts: Vec<&str> = url.split('/').collect();
+        if let Some(version_idx) = parts.iter().position(|&r| r == "version") {
+            if version_idx > 0 && version_idx + 1 < parts.len() {
+                let project_slug = parts[version_idx - 1];
+                let version_id = parts[version_idx + 1]
+                    .split('?')
+                    .next()
+                    .unwrap_or("")
+                    .split('#')
+                    .next()
+                    .unwrap_or("");
+                let api_url = format!(
+                    "https://api.modrinth.com/v2/project/{}/version/{}",
+                    project_slug, version_id
+                );
+                if let Ok(resp) = client.get(&api_url).send().await {
+                    if let Ok(modrinth_data) = resp.json::<serde_json::Value>().await {
+                        if let Some(files) = modrinth_data["files"].as_array() {
+                            let file = files
+                                .iter()
+                                .find(|f| f["primary"] == true)
+                                .or_else(|| files.first());
+                            if let Some(file) = file {
+                                if let Some(direct_url) = file["url"].as_str() {
+                                    url = direct_url.to_string();
+                                    if let Some(fname) = file["filename"].as_str() {
+                                        resolved_filename = Some(fname.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let Some(domain_idx) = parts.iter().position(|&r| r.contains("modrinth.com")) {
+            let slug_idx = if domain_idx + 2 < parts.len() {
+                let type_seg = parts[domain_idx + 1];
+                if ["plugin", "mod", "project", "datapack", "resourcepack"].contains(&type_seg) {
+                    domain_idx + 2
+                } else {
+                    domain_idx + 1
+                }
+            } else if domain_idx + 1 < parts.len() {
+                domain_idx + 1
+            } else {
+                0
+            };
+            if slug_idx > 0 && slug_idx < parts.len() {
+                let project_slug = parts[slug_idx]
+                    .split('?')
+                    .next()
+                    .unwrap_or("")
+                    .split('#')
+                    .next()
+                    .unwrap_or("");
+                if !project_slug.is_empty() {
+                    let api_url = format!("https://api.modrinth.com/v2/project/{}/version", project_slug);
+                    let loaders_arr = if project_type == "mod" || project_type == "modpack" {
+                        vec![server_type]
+                    } else {
+                        vec![
+                            "paper",
+                            "purpur",
+                            "spigot",
+                            "bukkit",
+                            "velocity",
+                            "waterfall",
+                            "bungeecord",
+                        ]
+                    };
+                    let loaders = serde_json::json!(loaders_arr).to_string();
+                    let versions = serde_json::json!([minecraft]).to_string();
+                    if let Ok(resp) = client
+                        .get(&api_url)
+                        .query(&[
+                            ("loaders", loaders.as_str()),
+                            ("game_versions", versions.as_str()),
+                            ("include_changelog", "false"),
+                        ])
+                        .send()
+                        .await
+                    {
+                        if let Ok(modrinth_data) = resp.json::<serde_json::Value>().await {
+                            if let Some(items) = modrinth_data.as_array() {
+                                if let Some(version) = items.first() {
+                                    if let Some(files) = version["files"].as_array() {
+                                        let file = files
+                                            .iter()
+                                            .find(|f| f["primary"] == true)
+                                            .or_else(|| files.first());
+                                        if let Some(file) = file {
+                                            if let Some(direct_url) = file["url"].as_str() {
+                                                url = direct_url.to_string();
+                                                if let Some(fname) = file["filename"].as_str() {
+                                                    resolved_filename = Some(fname.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let file_name = resolved_filename
+        .or_else(|| {
+            download["fileInfo"]["name"]
+                .as_str()
+                .map(|s| s.to_string())
+        })
+        .or_else(|| {
+            let path = url.split('?').next()?;
+            let filename = path.split('/').last()?;
+            if filename.to_lowercase().ends_with(".jar") {
+                Some(filename.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| {
+            let sanitized_id = id.replace('/', "-").replace('\\', "-");
+            format!("{}.jar", sanitized_id)
+        })
+        .replace('/', "-")
+        .replace('\\', "-");
+
     Ok(PluginDownload {
-        url: download["downloadUrl"]
-            .as_str()
-            .ok_or("This Hangar release uses an external download")?
-            .into(),
-        file_name: download["fileInfo"]["name"]
-            .as_str()
-            .unwrap_or(&format!("{id}.jar"))
-            .to_string(),
+        url,
+        file_name,
         version: version["name"].as_str().unwrap_or("Unknown").into(),
         dependencies: Vec::new(),
     })
@@ -859,7 +1051,11 @@ pub async fn install_plugin(
     if download.file_name.contains(['/', '\\']) {
         return Err("Invalid plugin filename".into());
     }
-    let directory = Path::new(server_path).join(if project_type == "mod" { "mods" } else { "plugins" });
+    let directory = Path::new(server_path).join(if project_type == "mod" {
+        "mods"
+    } else {
+        "plugins"
+    });
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let mut response = reqwest::Client::builder()
         .user_agent(USER_AGENT)
@@ -1100,17 +1296,29 @@ pub async fn install_modpack(
             let state = app.state::<crate::database::DbState>();
             let conn = state.db.lock().map_err(|e| e.to_string())?;
             crate::database::get_server(&conn, server_id)
-                .map_err(|e| e.to_string())?.ok_or("Server not found")?.java_path
+                .map_err(|e| e.to_string())?
+                .ok_or("Server not found")?
+                .java_path
         };
         let jar_path = crate::downloader::install_mod_loader(
-            app.clone(), loader_type.clone(), mc_version.clone(), server_path.to_string(),
-            java_path, Some(loader_version.clone()),
-        ).await?;
+            app.clone(),
+            loader_type.clone(),
+            mc_version.clone(),
+            server_path.to_string(),
+            java_path,
+            Some(loader_version.clone()),
+        )
+        .await?;
         let state = app.state::<crate::database::DbState>();
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         crate::database::update_server_type_and_version(
-            &conn, server_id, &loader_type, mc_version, &jar_path,
-        ).map_err(|e| format!("Failed to update database: {e}"))?;
+            &conn,
+            server_id,
+            &loader_type,
+            mc_version,
+            &jar_path,
+        )
+        .map_err(|e| format!("Failed to update database: {e}"))?;
     }
 
     // 6. Download Mod Jars
@@ -1127,7 +1335,16 @@ pub async fn install_modpack(
         }
         if let Some(url) = file.downloads.first().cloned() {
             let relative = std::path::Path::new(&file.path);
-            if relative.is_absolute() || relative.components().any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::Prefix(_) | std::path::Component::RootDir)) {
+            if relative.is_absolute()
+                || relative.components().any(|part| {
+                    matches!(
+                        part,
+                        std::path::Component::ParentDir
+                            | std::path::Component::Prefix(_)
+                            | std::path::Component::RootDir
+                    )
+                })
+            {
                 return Err("Modpack contains an unsafe file path".into());
             }
             let path = std::path::Path::new(server_path).join(relative);
@@ -1136,8 +1353,15 @@ pub async fn install_modpack(
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
-                let bytes = c.get(&url).send().await.and_then(|r| r.error_for_status())
-                    .map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
+                let bytes = c
+                    .get(&url)
+                    .send()
+                    .await
+                    .and_then(|r| r.error_for_status())
+                    .map_err(|e| e.to_string())?
+                    .bytes()
+                    .await
+                    .map_err(|e| e.to_string())?;
                 std::fs::write(&path, bytes).map_err(|e| e.to_string())
             });
         }
@@ -1159,7 +1383,14 @@ pub async fn install_modpack(
                     "server-overrides/"
                 };
                 let relative = Path::new(name.strip_prefix(strip_prefix).unwrap());
-                if relative.components().any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::Prefix(_) | std::path::Component::RootDir)) {
+                if relative.components().any(|part| {
+                    matches!(
+                        part,
+                        std::path::Component::ParentDir
+                            | std::path::Component::Prefix(_)
+                            | std::path::Component::RootDir
+                    )
+                }) {
                     return Err("Modpack contains an unsafe override path".into());
                 }
                 let target_path = server_path_obj.join(relative);

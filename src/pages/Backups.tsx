@@ -5,6 +5,8 @@ import { Database, Plus, Trash2, RotateCcw, Loader2, ShieldCheck } from 'lucide-
 import ConfirmDialog from '../components/ConfirmDialog';
 import { notify } from '../components/Notifications';
 import EmptyState from '../components/EmptyState';
+import ErrorState from '../components/ErrorState';
+import { ListSkeleton } from '../components/LoadingState';
 
 interface BackupInfo { name: string; size: number; created_at: string; }
 
@@ -28,6 +30,9 @@ export default function Backups() {
   const [newBackupName, setNewBackupName] = useState('');
   const [verifying, setVerifying] = useState('');
   const [verified, setVerified] = useState<Record<string, string>>({});
+  const [loadError, setLoadError] = useState('');
+  const [query, setQuery] = useState(() => localStorage.getItem('minedock:backups_query') || '');
+  const [sort, setSort] = useState(() => localStorage.getItem('minedock:backups_sort') || 'newest');
 
   // Use a ref to track the current load request so stale calls don't flip loading back on
   const loadingRef = useRef(false);
@@ -36,11 +41,12 @@ export default function Backups() {
     if (!selectedServer || loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
+    setLoadError('');
     try {
       const result = await invoke<BackupInfo[]>('list_mc_backups', { serverPath: selectedServer.install_path });
       setBackups(result);
     } catch (error) {
-      console.error('Failed to load backups:', error);
+      setLoadError(String(error));
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -115,6 +121,9 @@ export default function Backups() {
   };
 
   if (!selectedServer) return <div className="p-8 text-center text-gray-500">Select a server from the sidebar.</div>;
+  const visibleBackups = backups
+    .filter(backup => backup.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'size' ? b.size - a.size : Number(b.created_at) - Number(a.created_at));
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 w-full flex flex-col h-full">
@@ -137,16 +146,15 @@ export default function Backups() {
       </div>
 
       <div className="flex-1 overflow-y-auto bg-[#1c1d21] border border-[#2a2b2f] rounded-lg">
-        {loading ? (
-          <div className="animate-pulse divide-y divide-[#2a2b2f]">
-            {Array.from({ length: 5 }).map((_, index) => (
-              <div key={index} className="flex h-16 items-center gap-8 px-6">
-                <div className="h-3 flex-1 rounded bg-[#303136]" />
-                <div className="h-3 w-20 rounded bg-[#292a2f]" />
-                <div className="h-3 w-28 rounded bg-[#292a2f]" />
-              </div>
-            ))}
-          </div>
+        <div className="flex items-center gap-2 border-b border-[#2a2b2f] p-3">
+          <input value={query} onChange={event => { setQuery(event.target.value); localStorage.setItem('minedock:backups_query', event.target.value); }} placeholder="Search backups…" className="flex-1 rounded-md border border-[#2a2b2f] bg-[#0f0f11] px-3 py-2 text-sm text-white outline-none focus:border-blue-500" />
+          <select value={sort} onChange={event => { setSort(event.target.value); localStorage.setItem('minedock:backups_sort', event.target.value); }} className="rounded-md border border-[#2a2b2f] bg-[#0f0f11] px-3 py-2 text-sm text-gray-300"><option value="newest">Newest</option><option value="name">Name</option><option value="size">Largest</option></select>
+          <span className="min-w-20 text-right text-xs text-gray-500">{visibleBackups.length} results</span>
+        </div>
+        {loading && !backups.length ? (
+          <ListSkeleton />
+        ) : loadError ? (
+          <div className="p-4"><ErrorState title="Could not load backups" description="MineDock could not read this server’s backup folder." details={loadError} primaryAction={{ label: 'Retry', onClick: loadBackups }} /></div>
         ) : (
           <table className="w-full text-left">
             <thead className="bg-[#141517] border-b border-[#2a2b2f] text-xs font-semibold text-gray-400 uppercase tracking-wider sticky top-0">
@@ -158,7 +166,7 @@ export default function Backups() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#2a2b2f]">
-              {backups.map(backup => (
+              {visibleBackups.map(backup => (
                 <tr key={backup.name} className="h-14 hover:bg-[#202124] transition-colors group">
                   <td className="px-6 py-4 font-medium text-white flex items-center gap-3">
                     <Database size={18} className="text-blue-400" />
@@ -194,9 +202,9 @@ export default function Backups() {
                   </td>
                 </tr>
               ))}
-              {backups.length === 0 && (
+              {visibleBackups.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-4"><EmptyState icon={Database} title="No backups yet" description="Create a restore point before changing versions, worlds, or additions." action="Create backup" onAction={startCreateBackup} /></td>
+                  <td colSpan={4} className="p-4"><EmptyState icon={Database} title={backups.length ? 'No matching backups' : 'No backups yet'} description={backups.length ? 'Clear the search to see every backup.' : 'Create a restore point before changing versions, worlds, or additions.'} action={backups.length ? 'Clear search' : 'Create backup'} onAction={backups.length ? () => { setQuery(''); localStorage.removeItem('minedock:backups_query'); } : startCreateBackup} /></td>
                 </tr>
               )}
             </tbody>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2, Save } from 'lucide-react';
+import { setUnsavedChanges } from '../lib/navigationGuard';
 
 interface Props {
   dirty: boolean;
@@ -11,6 +12,11 @@ interface Props {
 
 export default function UnsavedChangesBar({ dirty, saving, onSave, onReset, saveDisabled }: Props) {
   const [shaking, setShaking] = useState(false);
+
+  useEffect(() => {
+    setUnsavedChanges(dirty);
+    return () => setUnsavedChanges(false);
+  }, [dirty]);
 
   useEffect(() => {
     if (!dirty) return;

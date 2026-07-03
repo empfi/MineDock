@@ -146,7 +146,10 @@ pub fn list_backups(server_path: &str) -> Result<Vec<BackupInfo>, String> {
 pub fn verify_backup(server_path: &str, backup_name: &str) -> Result<BackupVerification, String> {
     let file = File::open(backup_path(server_path, backup_name)?).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
-    let mut report = BackupVerification { files: 0, uncompressed_size: 0 };
+    let mut report = BackupVerification {
+        files: 0,
+        uncompressed_size: 0,
+    };
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
         if entry.enclosed_name().is_none() {
@@ -270,13 +273,15 @@ mod tests {
 
     #[test]
     fn verifies_every_backup_entry() {
-        let root = std::env::temp_dir().join(format!("minedock-backup-verify-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("minedock-backup-verify-{}", std::process::id()));
         let backup_dir = root.join(".minedock").join("backups");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&backup_dir).unwrap();
         let file = std::fs::File::create(backup_dir.join("test.zip")).unwrap();
         let mut zip = zip::ZipWriter::new(file);
-        zip.start_file("world/level.dat", zip::write::SimpleFileOptions::default()).unwrap();
+        zip.start_file("world/level.dat", zip::write::SimpleFileOptions::default())
+            .unwrap();
         zip.write_all(b"level").unwrap();
         zip.finish().unwrap();
         let result = verify_backup(root.to_str().unwrap(), "test.zip").unwrap();

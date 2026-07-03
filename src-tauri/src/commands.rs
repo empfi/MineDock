@@ -88,11 +88,24 @@ pub async fn install_modpack(
     version_id: String,
 ) -> Result<(), String> {
     let id = format!("Modrinth:{project_id}");
-    let _ = app.emit("install-progress", serde_json::json!({ "id": id, "name": project_id, "state": "downloading" }));
-    let result = crate::plugins::install_modpack(app.clone(), &server_path, server_id, &project_id, &version_id).await;
-    let _ = app.emit("install-progress", serde_json::json!({
-        "id": id, "name": project_id, "state": if result.is_ok() { "done" } else { "failed" }
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({ "id": id, "name": project_id, "state": "downloading" }),
+    );
+    let result = crate::plugins::install_modpack(
+        app.clone(),
+        &server_path,
+        server_id,
+        &project_id,
+        &version_id,
+    )
+    .await;
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "id": id, "name": project_id, "state": if result.is_ok() { "done" } else { "failed" }
+        }),
+    );
     result
 }
 
@@ -123,18 +136,35 @@ pub async fn install_marketplace_plugin(
         let mut pending = download.dependencies.clone();
         let mut installed = std::collections::HashSet::new();
         while let Some((dependency_id, dependency_version)) = pending.pop() {
-            if !installed.insert(dependency_id.clone()) { continue; }
+            if !installed.insert(dependency_id.clone()) {
+                continue;
+            }
             let dependency = resolve_download(
-                &source, &dependency_id, &minecraft_version, dependency_version.as_deref(),
-                &project_type, &server_type,
-            ).await?;
+                &source,
+                &dependency_id,
+                &minecraft_version,
+                dependency_version.as_deref(),
+                &project_type,
+                &server_type,
+            )
+            .await?;
             pending.extend(dependency.dependencies.clone());
-            let directory = std::path::Path::new(&server_path).join(if project_type == "mod" { "mods" } else { "plugins" });
+            let directory = std::path::Path::new(&server_path).join(if project_type == "mod" {
+                "mods"
+            } else {
+                "plugins"
+            });
             if !directory.join(&dependency.file_name).exists() {
                 install_plugin(
-                    &app, &format!("Modrinth:{dependency_id}"), &dependency_id,
-                    &server_path, dependency, None, &project_type,
-                ).await?;
+                    &app,
+                    &format!("Modrinth:{dependency_id}"),
+                    &dependency_id,
+                    &server_path,
+                    dependency,
+                    None,
+                    &project_type,
+                )
+                .await?;
             }
         }
     }
@@ -666,9 +696,13 @@ pub fn list_mc_backups(server_path: String) -> Result<Vec<BackupInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn verify_mc_backup(server_path: String, backup_name: String) -> Result<BackupVerification, String> {
+pub async fn verify_mc_backup(
+    server_path: String,
+    backup_name: String,
+) -> Result<BackupVerification, String> {
     tokio::task::spawn_blocking(move || verify_backup(&server_path, &backup_name))
-        .await.map_err(|e| e.to_string())?
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -721,24 +755,49 @@ pub struct ServerDiskUsage {
 }
 
 #[tauri::command]
-pub async fn get_server_disk_usage(state: State<'_, DbState>, id: i64) -> Result<ServerDiskUsage, String> {
+pub async fn get_server_disk_usage(
+    state: State<'_, DbState>,
+    id: i64,
+) -> Result<ServerDiskUsage, String> {
     let path = {
         let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
-        get_server(&conn, id).map_err(|e| e.to_string())?.ok_or("Server not found")?.install_path
+        get_server(&conn, id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Server not found")?
+            .install_path
     };
     tokio::task::spawn_blocking(move || {
         let root = std::path::Path::new(&path);
-        let mut usage = ServerDiskUsage { total: 0, worlds: 0, backups: 0, additions: 0 };
-        for entry in walkdir::WalkDir::new(root).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file()) {
+        let mut usage = ServerDiskUsage {
+            total: 0,
+            worlds: 0,
+            backups: 0,
+            additions: 0,
+        };
+        for entry in walkdir::WalkDir::new(root)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+        {
             let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
             usage.total += size;
             let relative = entry.path().strip_prefix(root).unwrap_or(entry.path());
-            if relative.starts_with(".minedock") { usage.backups += size; }
-            else if relative.starts_with("plugins") || relative.starts_with("mods") { usage.additions += size; }
-            else if relative.components().next().is_some_and(|part| part.as_os_str().to_string_lossy().starts_with("world")) { usage.worlds += size; }
+            if relative.starts_with(".minedock") {
+                usage.backups += size;
+            } else if relative.starts_with("plugins") || relative.starts_with("mods") {
+                usage.additions += size;
+            } else if relative
+                .components()
+                .next()
+                .is_some_and(|part| part.as_os_str().to_string_lossy().starts_with("world"))
+            {
+                usage.worlds += size;
+            }
         }
         Ok(usage)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

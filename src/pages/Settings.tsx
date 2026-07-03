@@ -6,6 +6,7 @@ import { Folder, Loader2, PlugZap } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { AppSettings } from '../types';
 import UnsavedChangesBar from '../components/UnsavedChangesBar';
+import FieldError from '../components/FieldError';
 
 export default function SettingsPage() {
   const { settings, fetchSettings } = useStore();
@@ -46,6 +47,9 @@ export default function SettingsPage() {
     ...(localSettings.tunnel_enabled && !/^[^:]+:\d+$/.test(localSettings.tunnel_relay) ? ['Relay address must use host:port format.'] : []),
     ...(localSettings.tunnel_enabled && localSettings.tunnel_token.length < 32 ? ['Relay token must contain at least 32 characters.'] : []),
   ] : [];
+  const ramError = localSettings && localSettings.default_ram_min > localSettings.default_ram_max ? 'Minimum RAM cannot exceed maximum RAM.' : '';
+  const relayError = localSettings?.tunnel_enabled && !/^[^:]+:\d+$/.test(localSettings.tunnel_relay) ? 'Use host:port format.' : '';
+  const tokenError = localSettings?.tunnel_enabled && localSettings.tunnel_token.length < 32 ? 'Token must contain at least 32 characters.' : '';
 
   const testRelay = async () => {
     if (!localSettings || errors.some(error => error.startsWith('Relay'))) return;
@@ -84,15 +88,10 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 w-full">
+    <div className="min-w-0 w-full overflow-x-hidden p-4 sm:p-6 lg:p-8">
       <PageHeader title="Settings" description="Configure global MineDock application settings." />
 
       <div className="space-y-6">
-        {errors.length > 0 && (
-          <div className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-            {errors.map(error => <div key={error}>{error}</div>)}
-          </div>
-        )}
         <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg overflow-hidden">
           <div className="p-4 border-b border-[#2a2b2f] bg-[#141517]">
             <h2 className="text-lg font-semibold text-white">Defaults</h2>
@@ -101,18 +100,18 @@ export default function SettingsPage() {
             
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">Default Server Directory</label>
-              <div className="flex gap-2">
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
                 <input
                   type="text"
                   value={localSettings.default_server_dir}
                   onChange={(e) => setLocalSettings({...localSettings, default_server_dir: e.target.value})}
-                  className="flex-1 bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                  className="min-w-0 flex-1 bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                   placeholder="e.g. C:\MineDock\Servers"
                 />
                 <button
                   type="button"
                   onClick={(e) => { e.preventDefault(); selectDir(); }}
-                  className="px-4 py-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white rounded-md transition-colors flex items-center gap-2"
+                  className="flex shrink-0 items-center justify-center gap-2 rounded-md bg-[#2a2b2f] px-4 py-2 text-white transition-colors hover:bg-[#3a3b3f]"
                 >
                   <Folder size={18} />
                   Browse
@@ -133,7 +132,7 @@ export default function SettingsPage() {
               <p className="text-xs text-gray-500 mt-1">Command or absolute path to java executable. 'java' uses PATH.</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Default Min RAM (MB)</label>
                 <input
@@ -141,7 +140,10 @@ export default function SettingsPage() {
                   value={localSettings.default_ram_min}
                   onChange={(e) => setLocalSettings({...localSettings, default_ram_min: parseInt(e.target.value) || 1024})}
                   className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                  aria-invalid={!!ramError}
+                  aria-describedby="default-min-ram-error"
                 />
+                <FieldError id="default-min-ram-error" message={ramError} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Default Max RAM (MB)</label>
@@ -150,7 +152,10 @@ export default function SettingsPage() {
                   value={localSettings.default_ram_max}
                   onChange={(e) => setLocalSettings({...localSettings, default_ram_max: parseInt(e.target.value) || 4096})}
                   className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                  aria-invalid={!!ramError}
+                  aria-describedby="default-max-ram-error"
                 />
+                <FieldError id="default-max-ram-error" message={ramError} />
               </div>
             </div>
 
@@ -191,7 +196,10 @@ export default function SettingsPage() {
                   disabled={!localSettings.tunnel_enabled}
                   className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white disabled:opacity-50"
                   placeholder="relay.example.com:7000"
+                  aria-invalid={!!relayError}
+                  aria-describedby="relay-address-error"
                 />
+                <FieldError id="relay-address-error" message={relayError} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Shared token</label>
@@ -202,7 +210,10 @@ export default function SettingsPage() {
                   disabled={!localSettings.tunnel_enabled}
                   className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white disabled:opacity-50"
                   placeholder="At least 32 random characters"
+                  aria-invalid={!!tokenError}
+                  aria-describedby="relay-token-error"
                 />
+                <FieldError id="relay-token-error" message={tokenError} />
               </div>
             </div>
             <p className="text-xs text-gray-500">Each server uses its configured port publicly. Ports must be unique and open on relay firewall.</p>

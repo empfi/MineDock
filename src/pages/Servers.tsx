@@ -24,7 +24,13 @@ export default function Servers() {
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confetti, setConfetti] = useState<{ x: number; y: number } | null>(null);
+  const [query, setQuery] = useState(() => localStorage.getItem('minedock:servers_query') || '');
+  const [statusFilter, setStatusFilter] = useState(() => localStorage.getItem('minedock:servers_status') || 'all');
+  const [sort, setSort] = useState(() => localStorage.getItem('minedock:servers_sort') || 'name');
   const navigate = useNavigate();
+  const visibleServers = servers
+    .filter(server => server.name.toLowerCase().includes(query.toLowerCase()) && (statusFilter === 'all' || server.status === statusFilter))
+    .sort((a, b) => sort === 'status' ? a.status.localeCompare(b.status) : sort === 'recent' ? Date.parse(b.last_started_at || '') - Date.parse(a.last_started_at || '') : a.name.localeCompare(b.name));
 
   // Import Server state
   const [showImport, setShowImport] = useState(false);
@@ -225,6 +231,12 @@ export default function Servers() {
       />
 
       <div className="bg-[#1c1d21] border border-[#2a2b2f] rounded-lg overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-[#2a2b2f] p-3">
+          <div className="relative flex-1"><Search size={15} className="absolute left-3 top-2.5 text-gray-600" /><input value={query} onChange={event => { setQuery(event.target.value); localStorage.setItem('minedock:servers_query', event.target.value); }} placeholder="Search servers…" className="w-full rounded-md border border-[#2a2b2f] bg-[#0f0f11] py-2 pl-9 pr-3 text-sm text-white outline-none focus:border-blue-500" /></div>
+          <select value={statusFilter} onChange={event => { setStatusFilter(event.target.value); localStorage.setItem('minedock:servers_status', event.target.value); }} className="rounded-md border border-[#2a2b2f] bg-[#0f0f11] px-3 py-2 text-sm text-gray-300"><option value="all">All statuses</option><option value="online">Online</option><option value="offline">Offline</option><option value="crashed">Crashed</option></select>
+          <select value={sort} onChange={event => { setSort(event.target.value); localStorage.setItem('minedock:servers_sort', event.target.value); }} className="rounded-md border border-[#2a2b2f] bg-[#0f0f11] px-3 py-2 text-sm text-gray-300"><option value="name">Name</option><option value="status">Status</option><option value="recent">Recently started</option></select>
+          <span className="min-w-20 text-right text-xs text-gray-500">{visibleServers.length} results</span>
+        </div>
         <table className="w-full text-left">
           <thead className="bg-[#141517] border-b border-[#2a2b2f] text-xs font-semibold text-gray-400 uppercase tracking-wider">
             <tr>
@@ -236,7 +248,7 @@ export default function Servers() {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#2a2b2f]">
-            {servers.map((server: Server, index: number) => (
+            {visibleServers.map((server: Server, index: number) => (
               <tr 
                 key={server.id} 
                 className="hover:bg-[#202124] transition-colors cursor-pointer group"
@@ -341,10 +353,10 @@ export default function Servers() {
                 </td>
               </tr>
             ))}
-            {servers.length === 0 && (
+            {visibleServers.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
-                  No servers found. Create one to get started.
+                  {servers.length ? 'No servers match these filters.' : 'No servers found. Create one to get started.'}
                 </td>
               </tr>
             )}

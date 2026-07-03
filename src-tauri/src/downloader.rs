@@ -203,10 +203,14 @@ pub async fn install_mod_loader(
             .json()
             .await
             .map_err(|e| e.to_string())?;
-        let loader = requested_loader.as_deref().or_else(|| loaders
-            .as_array()
-            .and_then(|items| items.first())
-            .and_then(|item| item["loader"]["version"].as_str()))
+        let loader = requested_loader
+            .as_deref()
+            .or_else(|| {
+                loaders
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .and_then(|item| item["loader"]["version"].as_str())
+            })
             .ok_or("No Fabric loader found")?;
         let installers: serde_json::Value = client
             .get("https://meta.fabricmc.net/v2/versions/installer")
@@ -280,11 +284,15 @@ pub async fn install_mod_loader(
         }
     });
     let version = match requested_artifact.as_deref() {
-        Some(requested) => candidates.iter().copied().find(|candidate| *candidate == requested)
+        Some(requested) => candidates
+            .iter()
+            .copied()
+            .find(|candidate| *candidate == requested)
             .ok_or_else(|| format!("{server_type} loader {requested} is unavailable"))?,
-        None => candidates.last().copied().ok_or_else(|| format!(
-            "No {server_type} build found for Minecraft {minecraft}"
-        ))?,
+        None => candidates
+            .last()
+            .copied()
+            .ok_or_else(|| format!("No {server_type} build found for Minecraft {minecraft}"))?,
     };
     let installer = Path::new(&server_path).join(format!("{artifact}-installer.jar"));
     download_url(

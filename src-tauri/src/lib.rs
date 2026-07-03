@@ -1,3 +1,4 @@
+mod ai;
 mod backups;
 mod commands;
 mod database;
@@ -23,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            app.manage(ai::AiState(Mutex::new(None)));
             let conn = database::init_db(&app.handle()).expect("Failed to initialize database");
             app.manage(database::DbState {
                 db: Mutex::new(conn),
@@ -104,6 +106,10 @@ pub fn run() {
             discord::update_discord_rpc,
             discord::clear_discord_rpc,
             commands::install_modpack,
+            ai::set_ai_key,
+            ai::has_ai_key,
+            ai::ai_chat,
+            ai::get_ai_logo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

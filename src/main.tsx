@@ -8,6 +8,14 @@ document.addEventListener("contextmenu", event => {
 });
 document.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
+  if (event.key === "F11") {
+    event.preventDefault();
+    const win = getCurrentWindow();
+    void win.isFullscreen()
+      .then(fullscreen => win.setFullscreen(!fullscreen))
+      .catch(err => console.error("Failed to toggle fullscreen:", err));
+    return;
+  }
   if (event.ctrlKey && key === "f") {
     event.preventDefault();
     window.dispatchEvent(new Event("minedock-find"));

@@ -18,6 +18,7 @@ import Players from '../pages/Players';
 import Worlds from '../pages/Worlds';
 import Additions from '../pages/Additions';
 import Health from '../pages/Health';
+import Assistant from '../pages/Assistant';
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Overview',
@@ -34,6 +35,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/backups': 'Backups',
   '/logs': 'Logs',
   '/health': 'Health',
+  '/assistant': 'DockAI',
 };
 
 function ServerRequired({ children }: { children: React.ReactNode }) {
@@ -52,8 +54,14 @@ export default function AppRoutes() {
     getCurrentWindow().setTitle(title).catch(() => {});
   }, [location.pathname]);
 
+  const assistantActive = location.pathname === '/assistant';
+
   return (
-    <div key={location.pathname} className="route-view">
+    <>
+    <div className={assistantActive ? 'route-view' : 'hidden'}>
+      <Assistant />
+    </div>
+    {!assistantActive && <div key={location.pathname} className="route-view">
       <Routes>
         <Route path="/" element={<Overview />} />
         <Route path="/servers" element={<Servers />} />
@@ -70,6 +78,7 @@ export default function AppRoutes() {
         <Route path="/logs" element={<ServerRequired><Logs /></ServerRequired>} />
         <Route path="/health" element={<ServerRequired><Health /></ServerRequired>} />
       </Routes>
-    </div>
+    </div>}
+    </>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useStore } from '../store';
+import UnsavedChangesBar from '../components/UnsavedChangesBar';
 import { invoke } from '@tauri-apps/api/core';
 import { notify } from '../components/Notifications';
 import { Code, LayoutList, Loader2, Save } from 'lucide-react';
@@ -202,6 +203,14 @@ export default function Properties() {
   const propertiesDirty = !loading && normalizePropsString(currentProperties) !== normalizePropsString(savedRawProps);
   const profileDirty = profileLoaded && JSON.stringify([profileName, profileJar, profileMinRam, profileMaxRam, profileJava]) !== savedProfile;
   const dirty = propertiesDirty || profileDirty;
+  const resetChanges = () => {
+    setRawProps(savedRawProps);
+    parseProperties(savedRawProps);
+    const saved = JSON.parse(savedProfile || '[]');
+    if (saved.length) {
+      setProfileName(saved[0]); setProfileJar(saved[1]); setProfileMinRam(saved[2]); setProfileMaxRam(saved[3]); setProfileJava(saved[4]);
+    }
+  };
 
   if (!selectedServer) {
     return <div className="p-8 text-center text-gray-500">Select a server from the sidebar.</div>;
@@ -280,6 +289,7 @@ export default function Properties() {
           MineDock Profile Settings
         </button>
       </div>
+      <UnsavedChangesBar dirty={dirty} saving={saving} onSave={handleSaveAll} onReset={resetChanges} saveDisabled={!!error} />
 
       {tab === 'properties' ? (
         error ? (

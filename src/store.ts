@@ -55,7 +55,10 @@ interface AppState {
 
 export const useStore = create<AppState>((set, get) => ({
   servers: [],
-  selectedServerId: null,
+  selectedServerId: (() => {
+    const saved = localStorage.getItem('minedock-selected-server-id');
+    return saved ? Number(saved) : null;
+  })(),
   openServerIds: JSON.parse(localStorage.getItem(TABS_KEY) || '[]'),
   settings: null,
   consoleLogs: loadConsoleLogs(),
@@ -133,7 +136,16 @@ export const useStore = create<AppState>((set, get) => ({
     try {
       const servers = await invoke<Server[]>('fetch_servers');
       set({ servers });
-      if (!get().selectedServerId && servers[0]?.id) set({ selectedServerId: servers[0].id });
+      const currentSelected = get().selectedServerId;
+      if (currentSelected && !servers.some(s => s.id === currentSelected)) {
+        const nextId = servers[0]?.id ?? null;
+        set({ selectedServerId: nextId });
+        if (nextId) localStorage.setItem('minedock-selected-server-id', String(nextId));
+        else localStorage.removeItem('minedock-selected-server-id');
+      } else if (!currentSelected && servers[0]?.id) {
+        set({ selectedServerId: servers[0].id });
+        localStorage.setItem('minedock-selected-server-id', String(servers[0].id));
+      }
     } catch (error) { console.error('Failed to fetch servers:', error); }
   },
 
@@ -145,15 +157,26 @@ export const useStore = create<AppState>((set, get) => ({
   setSelectedServer: (id) => set((state) => {
     const openServerIds = id && !state.openServerIds.includes(id) ? [...state.openServerIds, id] : state.openServerIds;
     localStorage.setItem(TABS_KEY, JSON.stringify(openServerIds));
+    if (id) {
+      localStorage.setItem('minedock-selected-server-id', String(id));
+    } else {
+      localStorage.removeItem('minedock-selected-server-id');
+    }
     return { selectedServerId: id, openServerIds };
   }),
   closeServerTab: (id) => set((state) => {
     const openServerIds = state.openServerIds.filter(tabId => tabId !== id);
     localStorage.setItem(TABS_KEY, JSON.stringify(openServerIds));
     const index = state.openServerIds.indexOf(id);
+    const nextSelectedId = state.selectedServerId === id ? (openServerIds[Math.min(index, openServerIds.length - 1)] ?? null) : state.selectedServerId;
+    if (nextSelectedId) {
+      localStorage.setItem('minedock-selected-server-id', String(nextSelectedId));
+    } else {
+      localStorage.removeItem('minedock-selected-server-id');
+    }
     return {
       openServerIds,
-      selectedServerId: state.selectedServerId === id ? (openServerIds[Math.min(index, openServerIds.length - 1)] ?? null) : state.selectedServerId,
+      selectedServerId: nextSelectedId,
     };
   }),
   moveServerTab: (from, to) => set((state) => {
