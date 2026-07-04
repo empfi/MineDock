@@ -335,10 +335,12 @@ function Layout() {
   };
 
   useEffect(() => {
+    let active = true;
     fetchServers();
     fetchSettings();
 
     const unlisten = listen('server-status-changed', (event: any) => {
+      if (!active) return;
       const [id, status] = event.payload;
       updateServerStatus(id, status);
       observeSafeApplyStatus(id, status);
@@ -352,6 +354,7 @@ function Layout() {
     });
 
     const unlistenConsole = listen('console-log', (event: any) => {
+      if (!active) return;
       const { server_id, line, is_error } = event.payload;
       appendConsoleLog(server_id, line, is_error);
 
@@ -369,17 +372,20 @@ function Layout() {
     });
 
     const unlistenStats = listen('server-stats', (event: any) => {
+      if (!active) return;
       const [id, cpu, memory] = event.payload;
       addServerStats(id, cpu, memory);
     });
 
     const unlistenRestart = listen<number>('server-auto-restart', (event) => {
+      if (!active) return;
       invoke('start_mc_server', { id: event.payload }).catch(error => {
         appendConsoleLog(event.payload, `Auto-restart failed: ${error}`, true);
       });
     });
 
     return () => {
+      active = false;
       unlisten.then(f => f());
       unlistenConsole.then(f => f());
       unlistenStats.then(f => f());
@@ -512,7 +518,7 @@ function Layout() {
                 <Plus size={16} />
               </button>
               {serverPickerOpen && (
-                <div className="fixed z-50 mt-1 w-56 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
+                <div className="origin-top-right popover-enter fixed z-50 mt-1 w-56 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
                   <div className="p-1">
                     <input
                       autoFocus

@@ -70,7 +70,7 @@ export function NotificationCenter() {
       if (next) setUnread(false);
       return next;
     })} title="Notifications" className="relative flex h-10 w-11 items-center justify-center text-gray-400 hover:bg-[#202124] hover:text-white"><Bell size={16} />{hasUnread && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-500" />}</button>
-    {open && <div className="fixed right-3 top-11 z-[110] w-96 overflow-hidden rounded-lg border border-[#2a2b2f] bg-[#1c1d21] shadow-2xl">
+    {open && <div className="popover-enter fixed right-3 top-11 z-[110] w-96 origin-top-right overflow-hidden rounded-lg border border-[#2a2b2f] bg-[#1c1d21] shadow-2xl">
       <div className="flex items-center justify-between border-b border-[#2a2b2f] px-4 py-3"><span className="font-semibold text-white">Notifications</span><button onClick={() => { history = []; publishHistory(); }} className="text-gray-600 hover:text-red-400"><Trash2 size={15} /></button></div>
       <div className="max-h-96 overflow-y-auto">{items.length ? items.map(item => <div key={item.id} className="border-b border-[#25262a] px-4 py-3 select-text"><div className="text-sm text-gray-200 break-all">{item.message}</div><div className="mt-1 text-xs text-gray-600">{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</div></div>) : <div className="py-12 text-center text-sm text-gray-600">No notifications.</div>}</div>
     </div>}

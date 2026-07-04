@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ArrowUp, Check, Download, ExternalLink, KeyRound, Loader2, Plus, Search } from 'lucide-react';
+import { AlertTriangle, ArrowUp, Check, CheckCircle2, ChevronRight, Download, ExternalLink, KeyRound, Loader2, Plus, Search, Terminal } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
@@ -11,7 +11,7 @@ import { notify } from '../components/Notifications';
 import { reportInstall } from '../components/ProgressHub';
 import { safeApply } from '../lib/safeApply';
 
-type Message = { role: 'user' | 'assistant'; content: string; hidden?: boolean; widgets?: Widget[]; sources?: Source[]; activities?: string[]; createdServerId?: number };
+type Message = { role: 'user' | 'assistant'; content: string; hidden?: boolean; widgets?: Widget[]; sources?: Source[]; activities?: string[]; createdServerId?: number; durationSeconds?: number };
 type Widget = { kind: string; title: string; fields: WidgetField[] | ServerOption[] };
 type WidgetField = { name: string; label: string; type: string; options?: string[]; value?: string | number | boolean };
 type ServerOption = { id: number; name: string; type: string; version: string };
@@ -135,6 +135,10 @@ const modelsByProvider = {
 };
 const initialMessage: Message = { role: 'assistant', content: 'Tell me what you want to build. I can ask for missing details, search compatible marketplace projects, and install approved additions into the selected server.' };
 
+function shortDescription(text: string): string {
+  return text.trim().split(/(?<=[.!?])\s/)[0] || 'Minecraft server addition.';
+}
+
 function savedMessages(): Message[] {
   try {
     const value = JSON.parse(localStorage.getItem('minedock:assistant_messages') || '[]');
@@ -168,12 +172,18 @@ export default function Assistant() {
   const [model, setModel] = useState(() => localStorage.getItem('minedock:ai_model') || 'openrouter/free');
   const [messages, setMessages] = useState<Message[]>(savedMessages);
   const [aiLogo, setAiLogo] = useState<string>('');
-  const [provider, setProvider] = useState<'openrouter' | 'aws'>('openrouter');
+  const [provider, setProvider] = useState<'openrouter' | 'aws'>(() => localStorage.getItem('minedock:ai_provider') === 'aws' ? 'aws' : 'openrouter');
   const endRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
+  const cancelRequested = useRef(false);
   const initialScroll = useRef(true);
 
-  useEffect(() => { invoke<boolean>('has_ai_key').then(setConnected).catch(() => {}).finally(() => setConnectionChecked(true)); }, []);
+  useEffect(() => {
+    setConnectionChecked(false);
+    setConnected(false);
+    localStorage.setItem('minedock:ai_provider', provider);
+    invoke<boolean>('has_ai_key', { provider }).then(setConnected).catch(() => {}).finally(() => setConnectionChecked(true));
+  }, [provider]);
   useEffect(() => { invoke<string>('get_ai_logo').then(setAiLogo).catch(() => {}); }, []);
   useEffect(() => { localStorage.setItem('minedock:assistant_messages', JSON.stringify(messages.slice(-100))); }, [messages]);
   useEffect(() => {
@@ -217,9 +227,11 @@ export default function Assistant() {
     const prompt = text.trim();
     if (!prompt || busyRef.current) return;
     busyRef.current = true;
+    cancelRequested.current = false;
     const next = [...messages, { role: 'user' as const, content: prompt, hidden }];
     setMessages(next); setInput(''); setBusy(true); setError('');
     setActivity('');
+    const startedAt = Date.now();
     try {
       const conversationServerId = [...next].reverse().find(message => message.createdServerId)?.createdServerId
         ?? selectedServerId
@@ -227,8 +239,8 @@ export default function Assistant() {
       const reply = await invoke<Reply>('ai_chat', { messages: next.map(({ role, content }) => ({ role, content })), serverId: conversationServerId, model });
       await fetchServers();
       if (reply.created_server_id) setSelectedServer(reply.created_server_id);
-      setMessages(items => [...items, { role: 'assistant', content: reply.message, widgets: reply.widgets, sources: reply.sources, activities: reply.activities, createdServerId: reply.created_server_id }]);
-    } catch (cause) { setError(String(cause)); }
+      setMessages(items => [...items, { role: 'assistant', content: reply.message, widgets: reply.widgets, sources: reply.sources, activities: reply.activities, createdServerId: reply.created_server_id, durationSeconds: Math.max(1, Math.round((Date.now() - startedAt) / 1000)) }]);
+    } catch (cause) { if (!cancelRequested.current) setError(String(cause)); }
     finally { busyRef.current = false; setBusy(false); setActivity(''); }
   };
   const submitWidget = (widget: Widget, data: Record<string, string>) => send(`${widget.title}:\n${Object.entries(data).map(([name, value]) => `${name}: ${value}`).join('\n')}`, true);
@@ -236,13 +248,15 @@ export default function Assistant() {
     if (busyRef.current) return;
     busyRef.current = true;
     // Find the last user message to re-send with the now-selected server
-    const lastUserMsg = messages.filter(m => m.role === 'user').at(-1);
+    const userMessages = messages.filter(m => m.role === 'user');
+    const lastUserMsg = userMessages[userMessages.length - 1];
     if (!lastUserMsg) { busyRef.current = false; return; }
     // Append a hidden anchor message so conversationServerId is set for all future sends
     const anchor = { role: 'user' as const, content: `Working in: ${serverName}`, hidden: true, createdServerId: serverId };
     const next = [...messages, anchor];
     setMessages(next);
     setBusy(true); setError(''); setActivity('');
+    const startedAt = Date.now();
     try {
       const reply = await invoke<Reply>('ai_chat', {
         messages: [...next.map(({ role, content }) => ({ role, content })), { role: 'user', content: lastUserMsg.content }],
@@ -251,7 +265,7 @@ export default function Assistant() {
       });
       await fetchServers();
       if (reply.created_server_id) setSelectedServer(reply.created_server_id);
-      setMessages(items => [...items, { role: 'assistant', content: reply.message, widgets: reply.widgets, sources: reply.sources, activities: reply.activities, createdServerId: reply.created_server_id }]);
+      setMessages(items => [...items, { role: 'assistant', content: reply.message, widgets: reply.widgets, sources: reply.sources, activities: reply.activities, createdServerId: reply.created_server_id, durationSeconds: Math.max(1, Math.round((Date.now() - startedAt) / 1000)) }]);
     } catch (cause) { setError(String(cause)); }
     finally { busyRef.current = false; setBusy(false); setActivity(''); }
   };
@@ -301,12 +315,21 @@ export default function Assistant() {
     localStorage.removeItem('minedock:assistant_messages');
   };
   const busyLabel = activity || (elapsed < 2 ? 'Reading your request' : elapsed < 6 ? 'Planning the next steps' : elapsed < 12 ? 'Working through the details' : 'Still working');
+  const quickActions = useMemo(() => {
+    const contextual = server?.status === 'online'
+      ? ['Check server health and recent errors', 'Restart this server', 'Who is online?', 'Recommend performance plugins']
+      : server
+        ? ['Start this server', 'Diagnose the last crash', 'Check startup logs', 'Update server settings']
+        : ['Create a survival server', 'Create a modded server', 'Help me choose server software'];
+    const pool = [...contextual, 'Set a custom MOTD', 'Change difficulty to hard', 'Manage the whitelist', 'Find a backup plugin', 'Explain this server setup'];
+    return pool.sort(() => Math.random() - 0.5).slice(0, 4);
+  }, [server?.id, server?.status, messages.length]);
 
   if (!connectionChecked) return <div className="h-full bg-[#0f0f11]" />;
   if (!connected) return <div className="flex h-full items-center justify-center p-8"><form onSubmit={connect} className="w-full max-w-md rounded-xl border border-[#2a2b2f] bg-[#1c1d21] p-6 shadow-2xl">
     <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400"><KeyRound size={21} /></div>
     <h1 className="text-xl font-semibold text-white">Connect Assistant</h1>
-    <p className="mt-2 text-sm leading-relaxed text-gray-400">Key stays only in MineDock’s Rust process for this session. It is never stored in browser storage or SQLite.</p>
+    <p className="mt-2 text-sm leading-relaxed text-gray-400">Keys are stored per provider in your operating system’s secure credential vault. They never enter browser storage or SQLite.</p>
     
     <div className="mt-5 mb-4 flex rounded-md bg-[#0f0f11] p-0.5 border border-[#2a2b2f]">
       <button type="button" onClick={() => { setProvider('openrouter'); setError(''); }} className={`flex-1 rounded py-1.5 text-xs font-medium transition-colors ${provider === 'openrouter' ? 'bg-[#2a2b2f] text-white' : 'text-gray-400 hover:text-gray-200'}`}>OpenRouter</button>
@@ -320,60 +343,95 @@ export default function Assistant() {
     </p>
 
     <input autoFocus type="password" value={key} onChange={event => { setKey(event.target.value.trim()); setError(''); }} placeholder={provider === 'aws' ? 'Bedrock API key or access_key:secret_key' : 'sk-or-v1-…'} aria-invalid={!!keyFormatError || !!error} aria-describedby="ai-key-status" className={`w-full rounded-md border bg-[#0f0f11] px-3 py-2.5 text-white outline-none ${keyFormatError || error ? 'border-red-500/60' : keyFormatValid ? 'border-emerald-500/60' : 'border-[#2a2b2f] focus:border-blue-500'}`} />
-    <p id="ai-key-status" className={`mt-2 min-h-4 text-xs ${keyFormatError || error ? 'text-red-400' : keyFormatValid ? 'text-emerald-400' : 'text-gray-600'}`}>{error || keyFormatError || (keyFormatValid ? (provider === 'aws' ? 'Looks valid. Bedrock API keys and access_key:secret_key pairs are both supported.' : 'Format valid. Key will be verified when connecting.') : 'Keys are validated without being stored.')}</p>
+    <p id="ai-key-status" className={`mt-2 min-h-4 text-xs ${keyFormatError || error ? 'text-red-400' : keyFormatValid ? 'text-emerald-400' : 'text-gray-600'}`}>{error || keyFormatError || (keyFormatValid ? (provider === 'aws' ? 'Looks valid. Bedrock API keys and access_key:secret_key pairs are both supported.' : 'Format valid. Key will be verified when connecting.') : 'Key will be saved only after validation.')}</p>
     <button disabled={!keyFormatValid || validatingKey} className="action-button mt-4 w-full bg-blue-600 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40">{validatingKey ? <><Loader2 size={15} className="animate-spin" /> Verifying connection…</> : 'Connect securely'}</button>
   </form></div>;
 
   return <div className="flex h-full flex-col bg-[#0f0f11]">
     <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-[#2a2b2f] px-4">
-      <div className="flex items-center gap-3"><MineDockMark className="h-8 w-8" logoText={aiLogo} /><div><h1 className="font-semibold text-white">DockAI</h1><p className="text-xs text-gray-500">{server ? `Working with ${server.name} · ${server.minecraft_version}` : 'Server setup workspace'}</p></div></div>
-      <div className="flex items-center gap-2"><button onClick={newChat} disabled={busy} className="flex h-8 items-center gap-1.5 rounded-md border border-[#303238] bg-[#18191c] px-3 text-xs font-medium text-gray-300 hover:border-[#454850] hover:bg-[#202124] hover:text-white disabled:opacity-40"><Plus size={14} /> New chat</button><select value={model} onChange={event => { setModel(event.target.value); localStorage.setItem('minedock:ai_model', event.target.value); }} className="rounded-md border border-[#2a2b2f] bg-[#141517] px-2.5 py-1.5 text-xs text-gray-300">{modelsByProvider[provider].map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></div>
+      <div className="flex items-center gap-3"><MineDockMark className="h-8 w-8" logoText={aiLogo} /><div><h1 className="font-semibold text-white">DockAI</h1><p className="text-xs text-gray-500">Server assistant</p></div>{servers.length > 0 && <select aria-label="Active server" value={selectedServerId ?? ''} onChange={event => setSelectedServer(Number(event.target.value))} className="ml-2 h-8 max-w-56 rounded-md border border-[#34353a] bg-[#18191c] px-3 text-xs text-gray-300"><option value="" disabled hidden>Select server</option>{servers.map(item => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}</select>}</div>
+      <div className="flex items-center gap-2"><button onClick={newChat} disabled={busy} className="flex h-8 items-center gap-1.5 rounded-md border border-[#303238] bg-[#18191c] px-3 text-xs font-medium text-gray-300 hover:border-[#454850] hover:bg-[#202124] hover:text-white disabled:opacity-40"><Plus size={14} /> New chat</button><select aria-label="AI provider" value={provider} disabled={busy} onChange={event => setProvider(event.target.value as 'openrouter' | 'aws')} className="rounded-md border border-[#2a2b2f] bg-[#141517] px-2.5 py-1.5 text-xs text-gray-300"><option value="openrouter">OpenRouter</option><option value="aws">AWS</option></select><select value={model} onChange={event => { setModel(event.target.value); localStorage.setItem('minedock:ai_model', event.target.value); }} className="rounded-md border border-[#2a2b2f] bg-[#141517] px-2.5 py-1.5 text-xs text-gray-300">{modelsByProvider[provider].map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></div>
     </header>
     <main className="select-text flex-1 overflow-y-auto px-4 py-7 sm:px-8">
       <div className="mx-auto max-w-3xl space-y-6">
         {messages.map((message, index) => (message.hidden || (message.role === 'user' && message.content.includes('\nserver_name:') && message.content.includes('\neula_accepted:'))) ? null : <div key={index} className={`ai-message flex gap-3 ${message.role === 'user' ? 'justify-end' : ''}`}>
           {message.role === 'assistant' && <MineDockMark className="mt-0.5 h-8 w-8" logoText={aiLogo} />}
           <div className={`relative max-w-[88%] ${message.role === 'user' ? 'rounded-xl bg-blue-600 px-4 py-3 text-white' : 'min-w-0 flex-1 text-gray-200'}`}>
-            {message.role === 'assistant' ? <AssistantMarkdown content={message.content} /> : <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>}
+            {message.role === 'assistant' ? <><ThoughtDisclosure message={message} /><AssistantMarkdown content={message.content} /></> : <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>}
             {message.sources && message.sources.length > 0 && <div className="mt-4 grid gap-2 sm:grid-cols-2">{message.sources.map(source => {
               const sourceId = `${source.source}:${source.id}`;
               const isInstalling = installing.includes(sourceId);
-              return <div key={sourceId} className="flex items-center gap-3 rounded-lg border border-[#2a2b2f] bg-[#18191c] p-3 hover:border-[#414247]">{source.icon_url ? <img src={source.icon_url} className="h-9 w-9 rounded-md" /> : <Search className="m-2 text-gray-600" size={18} />}<span className="min-w-0 flex-1"><b className="block truncate text-sm text-white">{source.name}</b><span className="text-[11px] text-gray-500">{source.source} · {source.downloads.toLocaleString()} downloads</span></span><button title="Open project page" onClick={async () => { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(source.source === 'Modrinth' ? `https://modrinth.com/project/${source.id}` : `https://hangar.papermc.io/${source.id}`); }} className="rounded p-2 text-gray-600 hover:bg-[#25262a] hover:text-gray-300"><ExternalLink size={13} /></button><button title={`Install ${source.name}`} onClick={() => installSource(source)} disabled={isInstalling} className="flex h-8 items-center gap-1.5 rounded-md bg-blue-600 px-2.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50">{isInstalling ? <Loader2 className="animate-spin" size={13} /> : <Download size={13} />}{isInstalling ? 'Installing' : 'Install'}</button></div>;
+              return <div key={sourceId} className="flex items-center gap-3 rounded-lg border border-[#2a2b2f] bg-[#18191c] p-3 hover:border-[#414247]">{source.icon_url ? <img src={source.icon_url} className="h-9 w-9 rounded-md" /> : <Search className="m-2 text-gray-600" size={18} />}<span className="min-w-0 flex-1"><b className="block truncate text-sm text-white">{source.name}</b><span className="line-clamp-2 text-[11px] leading-4 text-gray-500">{shortDescription(source.description)}</span></span><button title="Open project page" onClick={async () => { const { openUrl } = await import('@tauri-apps/plugin-opener'); openUrl(source.source === 'Modrinth' ? `https://modrinth.com/project/${source.id}` : `https://hangar.papermc.io/${source.id}`); }} className="rounded p-2 text-gray-600 hover:bg-[#25262a] hover:text-gray-300"><ExternalLink size={13} /></button><button title={`Install ${source.name}`} onClick={() => installSource(source)} disabled={isInstalling} className="flex h-8 items-center gap-1.5 rounded-md bg-blue-600 px-2.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50">{isInstalling ? <Loader2 className="animate-spin" size={13} /> : <Download size={13} />}{isInstalling ? 'Installing' : 'Install'}</button></div>;
             })}</div>}
             {message.createdServerId && <button onClick={() => { setSelectedServer(message.createdServerId!); navigate('/console'); }} className="action-button mt-4 bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-500">Open server</button>}
+            {message.activities?.filter(item => item.startsWith('LOG_EVIDENCE:')).map((item, evidenceIndex) => <LogEvidence key={evidenceIndex} content={item.slice('LOG_EVIDENCE:'.length)} />)}
             {message.widgets?.map((widget, widgetIndex) => widget.kind === 'server_select'
               ? <ServerSelectWidget key={widgetIndex} widget={widget} completed={index < messages.length - 1 && !busy && !error} onSelect={submitServerSelect} />
               : <InlineForm key={widgetIndex} widget={widget as Widget & { fields: WidgetField[] }} defaults={formDefaults} onSubmit={values => submitWidget(widget, values)} completed={index < messages.length - 1 && !busy && !error} />)}
           </div>
         </div>)}
-        {busy && <div className="ai-message flex items-center gap-3" role="status"><MineDockMark className="assistant-working-mark h-8 w-8" logoText={aiLogo} /><div className="flex items-baseline gap-2"><span key={busyLabel} className="assistant-status-enter assistant-thinking text-sm">{busyLabel}</span>{elapsed >= 3 && <span className="text-[11px] tabular-nums text-gray-600">{elapsed}s</span>}</div></div>}
+        {busy && <div className="ai-message flex items-center gap-3" role="status"><MineDockMark className="assistant-working-mark h-8 w-8" logoText={aiLogo} /><div className="flex-1"><div className="flex items-baseline gap-2"><span key={busyLabel} className="assistant-status-enter assistant-thinking text-sm">{busyLabel}</span>{elapsed >= 3 && <span className="text-[11px] tabular-nums text-gray-600">{elapsed}s</span>}</div>{activity && <div className="mt-2 border-l border-[#34353a] pl-3 text-xs text-gray-500">↳ {activity}</div>}</div></div>}
         {error && <ErrorState compact title="Assistant stopped" description="No further changes were made after the failure." details={error} primaryAction={{ label: 'Retry', onClick: () => { const userMessages = messages.filter(item => item.role === 'user'); send(userMessages[userMessages.length - 1]?.content || ''); } }} />}
         <div ref={endRef} />
       </div>
     </main>
     <footer className="bg-[#0f0f11] px-4 pb-5 pt-3">
-      <div className="mx-auto max-w-3xl">{messages.length === 1 && <div className="mb-3 flex flex-wrap gap-2">{starters.map(starter => <button key={starter} onClick={() => send(starter)} className="rounded-full border border-[#2a2b2f] px-3 py-1.5 text-xs text-gray-400 hover:bg-[#202124] hover:text-white">{starter}</button>)}</div>}
-        <form onSubmit={event => { event.preventDefault(); send(); }} className={`assistant-composer flex items-end gap-2 rounded-2xl border border-[#34353a] bg-[#1c1d21] p-2.5 ${busy || pendingForm ? 'opacity-60' : ''}`}><textarea disabled={busy || pendingForm} rows={1} value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder={pendingForm ? 'Complete the form above to continue' : busy ? 'MineDock is working…' : 'Describe the server or addition you want…'} className="max-h-32 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-gray-600 disabled:cursor-not-allowed" /><button aria-label="Send message" disabled={!input.trim() || busy || pendingForm} className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-500 disabled:bg-[#292a2e] disabled:text-gray-600"><ArrowUp size={17} strokeWidth={2.25} /></button></form>
+      <div className="mx-auto max-w-3xl">{!busy && !pendingForm && <div className="mb-3 flex flex-wrap justify-center gap-2">{(messages.length === 1 ? starters : quickActions).map(action => <button key={action} onClick={() => send(action)} className="rounded-full border border-[#2a2b2f] px-3 py-1.5 text-xs text-gray-400 hover:bg-[#202124] hover:text-white">{action}</button>)}</div>}
+        <form onSubmit={event => { event.preventDefault(); send(); }} className={`assistant-composer flex items-end gap-2 rounded-2xl border border-[#34353a] bg-[#1c1d21] p-2.5 ${pendingForm ? 'opacity-60' : ''}`}><textarea disabled={busy || pendingForm} rows={1} value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder={pendingForm ? 'Complete the form above to continue' : busy ? 'MineDock is working…' : 'Describe the server or addition you want…'} className="max-h-32 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-gray-600 disabled:cursor-not-allowed" />{busy ? <button type="button" onClick={() => { cancelRequested.current = true; setActivity('Cancelling…'); invoke('cancel_ai'); }} className="h-9 rounded-full bg-red-500/15 px-4 text-xs font-medium text-red-400 hover:bg-red-500/25">Cancel</button> : <button aria-label="Send message" disabled={!input.trim() || pendingForm} className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-500 disabled:bg-[#292a2e] disabled:text-gray-600"><ArrowUp size={17} strokeWidth={2.25} /></button>}</form>
       </div>
     </footer>
   </div>;
 }
 
 function AssistantMarkdown({ content }: { content: string }) {
-  const { body, reasoning } = parseAssistantContent(content);
+  const { body } = parseAssistantContent(content);
   return <div className="assistant-markdown text-sm leading-6">
-    {reasoning.map((entry, index) => <details key={index} className="mb-3 overflow-hidden rounded-lg border border-[#2a2b2f] bg-[#151619]">
-      <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-gray-400 marker:hidden hover:text-gray-200">
-        Reasoning
-      </summary>
-      <div className="border-t border-[#24262b] px-3 py-2 text-xs leading-6 text-gray-400 whitespace-pre-wrap">
-        {entry}
-      </div>
-    </details>)}
     {body && <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
       a: ({ href, children }) => <a href={href} onClick={event => { event.preventDefault(); if (href) import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(href)); }}>{children}</a>,
     }}>{body}</ReactMarkdown>}
   </div>;
+}
+
+function ThoughtDisclosure({ message }: { message: Message }) {
+  const reasoning = parseAssistantContent(message.content).reasoning;
+  const steps = message.activities?.filter(item => !item.startsWith('LOG_EVIDENCE:')) || [];
+  if (!reasoning.length && !steps.length) return null;
+  return <details className="group mb-3">
+    <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md py-1 text-xs font-medium text-gray-500 outline-none transition-colors hover:text-gray-300 focus-visible:ring-1 focus-visible:ring-blue-500/50 [&::-webkit-details-marker]:hidden">
+      <CheckCircle2 size={13} className="text-emerald-500/80" />
+      Completed in {message.durationSeconds || 1}s
+      <ChevronRight size={13} className="transition-transform duration-150 group-open:rotate-90" />
+    </summary>
+    <div className="mt-1.5 ml-1.5 space-y-1.5 border-l border-[#2a2b2f] py-1 pl-3 text-xs leading-5 text-gray-500">
+      {reasoning.map((entry, index) => <p key={`reason-${index}`} className="whitespace-pre-wrap text-gray-500">{entry}</p>)}
+      {steps.map((step, index) => <div key={`step-${index}`} className="flex items-start gap-2"><Check size={12} className="mt-1 shrink-0 text-emerald-500/70" /><span>{step}</span></div>)}
+    </div>
+  </details>;
+}
+
+function LogEvidence({ content }: { content: string }) {
+  const lines = content.trim().split('\n').filter(Boolean);
+  return <details className="group mt-4 overflow-hidden rounded-lg border border-[#2a2b2f] bg-[#121315]">
+    <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs text-gray-400 outline-none hover:bg-[#18191c] hover:text-gray-200 [&::-webkit-details-marker]:hidden">
+      <Terminal size={14} className="text-blue-400" />
+      <span className="font-medium">Startup logs</span>
+      <span className="rounded bg-[#24262b] px-1.5 py-0.5 text-[10px] tabular-nums text-gray-500">{lines.length} lines</span>
+      <ChevronRight size={13} className="ml-auto transition-transform group-open:rotate-90" />
+    </summary>
+    <div className="max-h-72 overflow-auto border-t border-[#24262b] bg-[#0d0e10] p-2 font-mono text-[11px] leading-5">
+      {lines.map((line, index) => {
+        const warning = /warn|warning/i.test(line);
+        const failure = /error|exception|failed|fatal|crash/i.test(line);
+        const timestamp = line.match(/^\[[^\]]+\]/)?.[0];
+        const text = timestamp ? line.slice(timestamp.length) : line;
+        return <div key={index} className={`flex gap-2 rounded px-2 py-0.5 hover:bg-white/[0.03] ${failure ? 'text-red-400' : warning ? 'text-amber-400' : 'text-gray-400'}`}>
+          <span className="w-7 shrink-0 select-none text-right text-gray-700">{index + 1}</span>
+          {failure || warning ? <AlertTriangle size={11} className="mt-1.5 shrink-0" /> : <span className="w-[11px] shrink-0" />}
+          <span className="min-w-0 whitespace-pre-wrap break-words">{timestamp && <span className="mr-2 text-gray-600">{timestamp}</span>}{text.trimStart()}</span>
+        </div>;
+      })}
+    </div>
+  </details>;
 }
 
 function InlineForm({ widget, defaults, onSubmit, completed }: { widget: Widget & { fields: WidgetField[] }; defaults: Record<string, string>; onSubmit: (values: Record<string, string>) => void; completed: boolean }) {

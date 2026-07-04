@@ -538,6 +538,18 @@ pub async fn search_marketplace(
         .user_agent(USER_AGENT)
         .build()
         .map_err(|e| e.to_string())?;
+
+    // If the AI passes a URL as the query (e.g., https://modrinth.com/plugin/modl), extract the slug
+    let query = if query.starts_with("http") && query.contains('/') {
+        query
+            .trim_end_matches('/')
+            .split('/')
+            .last()
+            .unwrap_or(query)
+    } else {
+        query
+    };
+
     let mut results: Vec<MarketplacePlugin> = Vec::new();
 
     let p_type = project_type.unwrap_or("plugin");
@@ -547,8 +559,10 @@ pub async fn search_marketplace(
     let fetch_limit = if query_hangar { 12 } else { 50 }; // Fetch more to allow filtering
     let limit = if query_hangar { 12 } else { 24 };
     let offset = (page * limit).to_string();
+    // Modrinth classifies plugins as "mod"
+    let modrinth_p_type = if p_type == "plugin" { "mod" } else { p_type };
     let facets = serde_json::json!([
-        [format!("project_type:{p_type}")],
+        [format!("project_type:{modrinth_p_type}")],
         ["server_side:required", "server_side:optional"],
         [format!("versions:{minecraft}")]
     ])
@@ -957,7 +971,10 @@ pub async fn resolve_download(
                     .next()
                     .unwrap_or("");
                 if !project_slug.is_empty() {
-                    let api_url = format!("https://api.modrinth.com/v2/project/{}/version", project_slug);
+                    let api_url = format!(
+                        "https://api.modrinth.com/v2/project/{}/version",
+                        project_slug
+                    );
                     let loaders_arr = if project_type == "mod" || project_type == "modpack" {
                         vec![server_type]
                     } else {
@@ -1010,11 +1027,7 @@ pub async fn resolve_download(
     }
 
     let file_name = resolved_filename
-        .or_else(|| {
-            download["fileInfo"]["name"]
-                .as_str()
-                .map(|s| s.to_string())
-        })
+        .or_else(|| download["fileInfo"]["name"].as_str().map(|s| s.to_string()))
         .or_else(|| {
             let path = url.split('?').next()?;
             let filename = path.split('/').last()?;

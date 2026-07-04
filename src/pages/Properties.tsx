@@ -289,7 +289,7 @@ export default function Properties() {
           MineDock Profile Settings
         </button>
       </div>
-      <UnsavedChangesBar dirty={dirty} saving={saving} onSave={handleSaveAll} onReset={resetChanges} saveDisabled={!!error} />
+
 
       {tab === 'properties' ? (
         error ? (

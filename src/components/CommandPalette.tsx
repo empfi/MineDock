@@ -93,7 +93,7 @@ export default function CommandPalette() {
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[40000] flex justify-center bg-black/70 px-4 pt-[12vh]" onMouseDown={() => setOpen(false)}>
+    <div className="command-palette fixed inset-0 z-[40000] flex justify-center bg-black/70 px-4 pt-[12vh]" onMouseDown={() => setOpen(false)}>
       <div className="h-fit w-full max-w-xl overflow-hidden rounded-xl border border-[#34353a] bg-[#1c1d21] shadow-2xl" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={event => event.stopPropagation()}>
         <div className="flex items-center gap-3 border-b border-[#2a2b2f] px-4">
           <Search size={18} className="text-gray-500" />

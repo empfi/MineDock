@@ -12,6 +12,7 @@ mod process;
 pub mod tunnel;
 mod worlds;
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 use tauri::Manager;
 
@@ -25,6 +26,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(ai::AiState(Mutex::new(None)));
+            app.manage(ai::AiCancelState(AtomicBool::new(false)));
             let conn = database::init_db(&app.handle()).expect("Failed to initialize database");
             app.manage(database::DbState {
                 db: Mutex::new(conn),
@@ -108,6 +110,7 @@ pub fn run() {
             commands::install_modpack,
             ai::set_ai_key,
             ai::has_ai_key,
+            ai::cancel_ai,
             ai::ai_chat,
             ai::get_ai_logo,
         ])
