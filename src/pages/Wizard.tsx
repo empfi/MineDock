@@ -36,9 +36,13 @@ export default function Wizard() {
   const navigate = useNavigate();
   const { servers, settings, fetchServers, getSoftwareVersionsCached, clearVersionsCache, fetchSettings } = useStore();
   const [step, setStep] = useState(1);
+  const [dockerAvailable, setDockerAvailable] = useState(false);
 
   useEffect(() => {
     clearVersionsCache();
+    invoke<boolean>('is_docker_available')
+      .then(setDockerAvailable)
+      .catch(console.error);
   }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +56,7 @@ export default function Wizard() {
   const [ramMax, setRamMax] = useState(4096);
   const [port, setPort] = useState(25565);
   const [javaPath, setJavaPath] = useState('java');
+  const [runInContainer, setRunInContainer] = useState(false);
   const [eulaAccepted, setEulaAccepted] = useState(false);
 
   // External Data
@@ -202,6 +207,7 @@ export default function Wizard() {
         ram_min: ramMin,
         ram_max: ramMax,
         java_path: javaPath,
+        run_in_container: runInContainer,
         created_at: new Date().toISOString(),
         port,
       };
@@ -422,67 +428,93 @@ export default function Wizard() {
 
         {step === 6 && (
           <div id="tour-java" className="space-y-4 animate-in fade-in slide-in-from-right-4">
-            <h2 className="text-xl font-semibold text-white">6. Java Path</h2>
-            <p className="text-gray-400 text-sm">Path to the Java executable. Minecraft 1.20.5+ requires Java 21.</p>
+            <h2 className="text-xl font-semibold text-white">6. Java Path & Environment</h2>
+            <p className="text-gray-400 text-sm">Configure how Minecraft will run. You can run locally or isolate using a Docker container.</p>
             
-            {loading ? (
-              <div className="flex items-center gap-3 text-gray-400 py-4">
-                <Loader2 size={20} className="animate-spin" /> Detecting Java installations...
-              </div>
-            ) : (
-              <div className="space-y-3">
+            <div className="flex flex-col border border-[#2a2b2f] bg-[#0f0f11] rounded-lg p-4 space-y-3">
+              <label className="text-sm font-semibold text-white">Docker Containerization</label>
+              <div className="flex items-center gap-4">
                 <button
                   type="button"
-                  onClick={installJava}
-                  disabled={installingJava}
-                  className="action-button bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                  style={{ '--action-width': '13.5rem' } as React.CSSProperties}
+                  disabled={!dockerAvailable}
+                  onClick={() => setRunInContainer(!runInContainer)}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${runInContainer ? 'bg-blue-600' : 'bg-gray-700'} disabled:opacity-40`}
                 >
-                  {installingJava && <Loader2 size={16} className="animate-spin" />}
-                  {installingJava ? `Installing Java ${managedJavaMajor}...` : `Install managed Java ${managedJavaMajor}`}
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${runInContainer ? 'translate-x-5' : 'translate-x-0'}`}
+                  />
                 </button>
-                <p className="text-xs text-gray-500">Stored inside MineDock. System Java and PATH stay unchanged.</p>
-                {!javaCompatible && (
-                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded text-sm">
-                    {selectedJavaMajor
-                      ? `Selected Java ${selectedJavaMajor} is too old. ${version || serverType} requires Java ${managedJavaMajor}.`
-                      : `Select a working Java ${managedJavaMajor}+ executable or install the managed runtime.`}
-                  </div>
-                )}
-                {detectedJavas.length === 0 && (
-                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded text-sm">
-                    No Java installations were automatically detected. You may need to manually provide the path.
-                  </div>
-                )}
-                
-                {detectedJavas.length > 0 && (
+                <span className="text-xs text-gray-400">
+                  {dockerAvailable
+                    ? 'Run inside a container. The correct Java version will be pulled and managed automatically by Docker.'
+                    : 'Docker is not running or not installed on this machine.'}
+                </span>
+              </div>
+            </div>
+
+            {runInContainer ? (
+              <div className="p-4 border border-blue-500/20 bg-blue-500/5 rounded-md text-sm text-blue-200">
+                Docker is enabled. MineDock will configure and launch the server in a container mapping port <span className="font-mono">{port}</span>. No local Java installation is required.
+              </div>
+            ) : (
+              loading ? (
+                <div className="flex items-center gap-3 text-gray-400 py-4">
+                  <Loader2 size={20} className="animate-spin" /> Detecting Java installations...
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={installJava}
+                    disabled={installingJava}
+                    className="action-button bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    style={{ '--action-width': '13.5rem' } as React.CSSProperties}
+                  >
+                    {installingJava && <Loader2 size={16} className="animate-spin" />}
+                    {installingJava ? `Installing Java ${managedJavaMajor}...` : `Install managed Java ${managedJavaMajor}`}
+                  </button>
+                  <p className="text-xs text-gray-500">Stored inside MineDock. System Java and PATH stay unchanged.</p>
+                  {!javaCompatible && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded text-sm">
+                      {selectedJavaMajor
+                        ? `Selected Java ${selectedJavaMajor} is too old. ${version || serverType} requires Java ${managedJavaMajor}.`
+                        : `Select a working Java ${managedJavaMajor}+ executable or install the managed runtime.`}
+                    </div>
+                  )}
+                  {detectedJavas.length === 0 && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded text-sm">
+                      No Java installations were automatically detected. You may need to manually provide the path.
+                    </div>
+                  )}
+                  
+                  {detectedJavas.length > 0 && (
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Select Detected Java</label>
+                      <select
+                        value={javaPath}
+                        onChange={(e) => setJavaPath(e.target.value)}
+                        className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-4 py-3 text-white focus:outline-none focus:border-blue-500 appearance-none font-mono text-sm"
+                      >
+                        {detectedJavas.map((j, i) => (
+                          <option key={i} value={j}>{j}</option>
+                        ))}
+                        {!detectedJavas.includes(javaPath) && <option value={javaPath}>{javaPath} (Custom)</option>}
+                      </select>
+                    </div>
+                  )}
+
                   <div>
-                    <label className="block text-sm text-gray-400 mb-2">Select Detected Java</label>
-                    <select
+                    <label className="block text-sm text-gray-400 mb-2">Or Provide Custom Path</label>
+                    <input
+                      type="text"
                       value={javaPath}
                       onChange={(e) => setJavaPath(e.target.value)}
-                      className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-4 py-3 text-white focus:outline-none focus:border-blue-500 appearance-none"
-                    >
-                      {detectedJavas.map((j, i) => (
-                        <option key={i} value={j}>{j}</option>
-                      ))}
-                      {/* Allow retaining the custom path if they entered one */}
-                      {!detectedJavas.includes(javaPath) && <option value={javaPath}>{javaPath} (Custom)</option>}
-                    </select>
+                      className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-4 py-3 text-white text-lg focus:outline-none focus:border-blue-500 font-mono text-sm"
+                      placeholder="C:\Program Files\Java\jdk-21\bin\java.exe"
+                    />
                   </div>
-                )}
-
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Or Provide Custom Path</label>
-                  <input
-                    type="text"
-                    value={javaPath}
-                    onChange={(e) => setJavaPath(e.target.value)}
-                    className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-4 py-3 text-white text-lg focus:outline-none focus:border-blue-500 font-mono text-sm"
-                    placeholder="C:\Program Files\Java\jdk-21\bin\java.exe"
-                  />
                 </div>
-              </div>
+              )
             )}
           </div>
         )}
@@ -556,7 +588,7 @@ export default function Wizard() {
               }
               setStep(step + 1);
             }}
-            disabled={(step === 2 && !hasValidInstallPath) || (step === 3 && (loading || !version)) || (step === 6 && !javaCompatible)}
+            disabled={(step === 2 && !hasValidInstallPath) || (step === 3 && (loading || !version)) || (step === 6 && !runInContainer && !javaCompatible)}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Next <ChevronRight size={18} />

@@ -1,4 +1,4 @@
-use crate::models::{AppSettings, Server};
+use crate::models::{AppSettings, ScheduleTask, Server, ServerSchedule};
 use crate::paths;
 use rusqlite::{params, Connection, Result};
 use std::sync::Mutex;
@@ -39,6 +39,58 @@ pub fn init_db(app: &AppHandle) -> Result<Connection> {
         "ALTER TABLE servers ADD COLUMN share_enabled BOOLEAN NOT NULL DEFAULT 1",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE servers ADD COLUMN run_in_container BOOLEAN NOT NULL DEFAULT 0",
+        [],
+    );
+
+    // Create schedules table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            cron_expression TEXT NOT NULL,
+            action TEXT NOT NULL,
+            action_payload TEXT,
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            require_online BOOLEAN NOT NULL DEFAULT 0,
+            FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    let _ = conn.execute(
+        "ALTER TABLE schedules ADD COLUMN require_online BOOLEAN NOT NULL DEFAULT 0",
+        [],
+    );
+
+    // Create schedule tasks table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schedule_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            sequence_order INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            payload TEXT,
+            time_offset_secs INTEGER NOT NULL DEFAULT 0,
+            continue_on_failure BOOLEAN NOT NULL DEFAULT 1,
+            FOREIGN KEY(schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Perform data migration from old schedules with action columns to schedule_tasks
+    let tasks_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM schedule_tasks", [], |row| row.get(0))
+        .unwrap_or(0);
+    if tasks_count == 0 {
+        let _ = conn.execute(
+            "INSERT INTO schedule_tasks (schedule_id, sequence_order, action, payload, time_offset_secs, continue_on_failure)
+             SELECT id, 1, action, action_payload, 0, 1 FROM schedules WHERE action IS NOT NULL AND action != ''",
+            [],
+        );
+    }
 
     // Create settings table
     conn.execute(
@@ -113,7 +165,7 @@ pub fn init_db(app: &AppHandle) -> Result<Connection> {
 }
 
 pub fn get_servers(conn: &Connection) -> Result<Vec<Server>> {
-    let mut stmt = conn.prepare("SELECT id, name, minecraft_version, server_type, install_path, jar_path, status, ram_min, ram_max, java_path, created_at, last_started_at, port, share_enabled FROM servers")?;
+    let mut stmt = conn.prepare("SELECT id, name, minecraft_version, server_type, install_path, jar_path, status, ram_min, ram_max, java_path, created_at, last_started_at, port, share_enabled, run_in_container FROM servers")?;
     let server_iter = stmt.query_map([], |row| {
         let install_path: String = row.get(4)?;
         let path = std::path::Path::new(&install_path);
@@ -134,6 +186,7 @@ pub fn get_servers(conn: &Connection) -> Result<Vec<Server>> {
             last_started_at: row.get(11)?,
             port: row.get(12)?,
             share_enabled: row.get(13)?,
+            run_in_container: row.get(14)?,
             install_path_exists,
             backups_path_exists,
         })
@@ -149,8 +202,8 @@ pub fn get_servers(conn: &Connection) -> Result<Vec<Server>> {
 pub fn add_server(conn: &Connection, server: &Server) -> Result<i64> {
     conn.execute(
         "INSERT INTO servers (
-            name, minecraft_version, server_type, install_path, jar_path, status, ram_min, ram_max, java_path, created_at, last_started_at, port, share_enabled
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            name, minecraft_version, server_type, install_path, jar_path, status, ram_min, ram_max, java_path, created_at, last_started_at, port, share_enabled, run_in_container
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             server.name,
             server.minecraft_version,
@@ -164,7 +217,8 @@ pub fn add_server(conn: &Connection, server: &Server) -> Result<i64> {
             server.created_at,
             server.last_started_at,
             server.port,
-            server.share_enabled
+            server.share_enabled,
+            server.run_in_container
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -229,10 +283,11 @@ pub fn update_server_profile(
     ram_min: i32,
     ram_max: i32,
     java_path: &str,
+    run_in_container: bool,
 ) -> Result<()> {
     conn.execute(
-        "UPDATE servers SET name = ?1, jar_path = ?2, ram_min = ?3, ram_max = ?4, java_path = ?5 WHERE id = ?6",
-        params![name, jar_path, ram_min, ram_max, java_path, server_id],
+        "UPDATE servers SET name = ?1, jar_path = ?2, ram_min = ?3, ram_max = ?4, java_path = ?5, run_in_container = ?6 WHERE id = ?7",
+        params![name, jar_path, ram_min, ram_max, java_path, run_in_container, server_id],
     )?;
     Ok(())
 }
@@ -315,7 +370,7 @@ pub fn update_settings(conn: &Connection, settings: &AppSettings) -> Result<()> 
 }
 
 pub fn get_server(conn: &Connection, server_id: i64) -> Result<Option<Server>> {
-    let mut stmt = conn.prepare("SELECT id, name, minecraft_version, server_type, install_path, jar_path, status, ram_min, ram_max, java_path, created_at, last_started_at, port, share_enabled FROM servers WHERE id = ?1")?;
+    let mut stmt = conn.prepare("SELECT id, name, minecraft_version, server_type, install_path, jar_path, status, ram_min, ram_max, java_path, created_at, last_started_at, port, share_enabled, run_in_container FROM servers WHERE id = ?1")?;
     let mut rows = stmt.query(params![server_id])?;
 
     if let Some(row) = rows.next()? {
@@ -338,10 +393,142 @@ pub fn get_server(conn: &Connection, server_id: i64) -> Result<Option<Server>> {
             last_started_at: row.get(11)?,
             port: row.get(12)?,
             share_enabled: row.get(13)?,
+            run_in_container: row.get(14)?,
             install_path_exists,
             backups_path_exists,
         }))
     } else {
         Ok(None)
     }
+}
+
+pub fn get_schedules(conn: &Connection, server_id: i64) -> Result<Vec<ServerSchedule>> {
+    let mut stmt = conn.prepare("SELECT id, server_id, name, cron_expression, is_active, require_online FROM schedules WHERE server_id = ?1")?;
+    let schedule_iter = stmt.query_map([server_id], |row| {
+        Ok(ServerSchedule {
+            id: Some(row.get(0)?),
+            server_id: row.get(1)?,
+            name: row.get(2)?,
+            cron_expression: row.get(3)?,
+            is_active: row.get(4)?,
+            require_online: row.get(5)?,
+            tasks: Vec::new(),
+        })
+    })?;
+    let mut schedules = Vec::new();
+    for schedule in schedule_iter {
+        let mut sched = schedule?;
+        sched.tasks = get_schedule_tasks(conn, sched.id.unwrap())?;
+        schedules.push(sched);
+    }
+    Ok(schedules)
+}
+
+pub fn get_all_active_schedules(conn: &Connection) -> Result<Vec<ServerSchedule>> {
+    let mut stmt = conn.prepare("SELECT id, server_id, name, cron_expression, is_active, require_online FROM schedules WHERE is_active = 1")?;
+    let schedule_iter = stmt.query_map([], |row| {
+        Ok(ServerSchedule {
+            id: Some(row.get(0)?),
+            server_id: row.get(1)?,
+            name: row.get(2)?,
+            cron_expression: row.get(3)?,
+            is_active: row.get(4)?,
+            require_online: row.get(5)?,
+            tasks: Vec::new(),
+        })
+    })?;
+    let mut schedules = Vec::new();
+    for schedule in schedule_iter {
+        let mut sched = schedule?;
+        sched.tasks = get_schedule_tasks(conn, sched.id.unwrap())?;
+        schedules.push(sched);
+    }
+    Ok(schedules)
+}
+
+fn get_schedule_tasks(conn: &Connection, schedule_id: i64) -> Result<Vec<ScheduleTask>> {
+    let mut stmt = conn.prepare("SELECT id, sequence_order, action, payload, time_offset_secs, continue_on_failure FROM schedule_tasks WHERE schedule_id = ?1 ORDER BY sequence_order ASC")?;
+    let task_iter = stmt.query_map([schedule_id], |row| {
+        Ok(ScheduleTask {
+            id: Some(row.get(0)?),
+            schedule_id: Some(schedule_id),
+            sequence_order: row.get(1)?,
+            action: row.get(2)?,
+            payload: row.get(3)?,
+            time_offset_secs: row.get(4)?,
+            continue_on_failure: row.get(5)?,
+        })
+    })?;
+    let mut tasks = Vec::new();
+    for task in task_iter {
+        tasks.push(task?);
+    }
+    Ok(tasks)
+}
+
+pub fn add_schedule(conn: &Connection, schedule: &ServerSchedule) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO schedules (server_id, name, cron_expression, is_active, require_online, action) VALUES (?1, ?2, ?3, ?4, ?5, '')",
+        params![
+            schedule.server_id,
+            schedule.name,
+            schedule.cron_expression,
+            schedule.is_active,
+            schedule.require_online
+        ],
+    )?;
+    let schedule_id = conn.last_insert_rowid();
+
+    for task in &schedule.tasks {
+        conn.execute(
+            "INSERT INTO schedule_tasks (schedule_id, sequence_order, action, payload, time_offset_secs, continue_on_failure) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                schedule_id,
+                task.sequence_order,
+                task.action,
+                task.payload,
+                task.time_offset_secs,
+                task.continue_on_failure
+            ],
+        )?;
+    }
+
+    Ok(schedule_id)
+}
+
+pub fn update_schedule(conn: &Connection, schedule: &ServerSchedule) -> Result<()> {
+    conn.execute(
+        "UPDATE schedules SET name = ?1, cron_expression = ?2, is_active = ?3, require_online = ?4 WHERE id = ?5",
+        params![
+            schedule.name,
+            schedule.cron_expression,
+            schedule.is_active,
+            schedule.require_online,
+            schedule.id
+        ],
+    )?;
+
+    if let Some(schedule_id) = schedule.id {
+        conn.execute("DELETE FROM schedule_tasks WHERE schedule_id = ?1", params![schedule_id])?;
+        for task in &schedule.tasks {
+            conn.execute(
+                "INSERT INTO schedule_tasks (schedule_id, sequence_order, action, payload, time_offset_secs, continue_on_failure) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    schedule_id,
+                    task.sequence_order,
+                    task.action,
+                    task.payload,
+                    task.time_offset_secs,
+                    task.continue_on_failure
+                ],
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn delete_schedule(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM schedules WHERE id = ?1", params![id])?;
+    Ok(())
 }

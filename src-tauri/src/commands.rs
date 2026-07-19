@@ -14,7 +14,7 @@ use crate::downloader::{
 };
 use crate::files::{
     create_folder, delete_or_schedule, import_paths, list_directory, list_log_summaries,
-    read_log_file, read_text_file, write_text_file, FileInfo, LogSummary,
+    move_entries, move_entry, read_log_file, read_text_file, search_files, write_text_file, FileInfo, FileSearchResult, LogSummary,
 };
 use crate::models::{AppSettings, Server};
 use crate::paths;
@@ -630,6 +630,21 @@ pub fn get_directory_contents(base_dir: String, sub_path: String) -> Result<Vec<
 }
 
 #[tauri::command]
+pub fn search_server_files(base_dir: String, query: String) -> Result<Vec<FileSearchResult>, String> {
+    search_files(&base_dir, &query)
+}
+
+#[tauri::command]
+pub fn move_file_or_folder(base_dir: String, source_path: String, destination_path: String) -> Result<(), String> {
+    move_entry(&base_dir, &source_path, &destination_path)
+}
+
+#[tauri::command]
+pub fn move_files_or_folders(base_dir: String, source_paths: Vec<String>, destination_dir: String) -> Result<(), String> {
+    move_entries(&base_dir, &source_paths, &destination_dir)
+}
+
+#[tauri::command]
 pub fn read_file_content(base_dir: String, sub_path: String) -> Result<String, String> {
     read_text_file(&base_dir, &sub_path)
 }
@@ -956,9 +971,10 @@ pub fn update_server_settings(
     ram_min: i32,
     ram_max: i32,
     java_path: String,
+    run_in_container: bool,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
-    update_server_profile(&conn, id, &name, &jar_path, ram_min, ram_max, &java_path)
+    update_server_profile(&conn, id, &name, &jar_path, ram_min, ram_max, &java_path, run_in_container)
         .map_err(|e| e.to_string())
 }
 
@@ -1154,4 +1170,55 @@ mod import_tests {
         );
         assert_eq!(normalize_minecraft_version("1.20.6"), "1.20.6");
     }
+}
+
+#[tauri::command]
+pub fn is_docker_available() -> bool {
+    crate::process::is_docker_available()
+}
+
+#[tauri::command]
+pub fn get_server_schedules(state: State<DbState>, server_id: i64) -> Result<Vec<crate::models::ServerSchedule>, String> {
+    let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
+    crate::database::get_schedules(&conn, server_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_server_schedule(state: State<DbState>, schedule: crate::models::ServerSchedule) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
+    crate::database::add_schedule(&conn, &schedule).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_server_schedule(state: State<DbState>, schedule: crate::models::ServerSchedule) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
+    crate::database::update_schedule(&conn, &schedule).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_server_schedule(state: State<DbState>, id: i64) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
+    crate::database::delete_schedule(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn trigger_schedule_now(app: AppHandle, state: State<'_, DbState>, id: i64) -> Result<(), String> {
+    let schedule = {
+        let conn = state.db.lock().map_err(|_| "Failed to lock DB")?;
+        let mut found = None;
+        if let Ok(mut stmt) = conn.prepare("SELECT server_id FROM schedules WHERE id = ?1") {
+            if let Ok(server_id) = stmt.query_row([id], |row| row.get::<_, i64>(0)) {
+                if let Ok(schedules) = crate::database::get_schedules(&conn, server_id) {
+                    found = schedules.into_iter().find(|s| s.id == Some(id));
+                }
+            }
+        }
+        found.ok_or("Schedule not found")?
+    };
+
+    tokio::spawn(async move {
+        crate::scheduler::run_schedule_tasks(app, schedule).await;
+    });
+
+    Ok(())
 }

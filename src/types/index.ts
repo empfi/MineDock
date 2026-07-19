@@ -13,8 +13,29 @@ export interface Server {
   last_started_at?: string;
   port: number;
   share_enabled?: boolean;
+  run_in_container?: boolean;
   install_path_exists?: boolean;
   backups_path_exists?: boolean;
+}
+
+export interface ServerSchedule {
+  id?: number;
+  server_id: number;
+  name: string;
+  cron_expression: string;
+  is_active: boolean;
+  require_online: boolean;
+  tasks: ScheduleTask[];
+}
+
+export interface ScheduleTask {
+  id?: number;
+  schedule_id?: number;
+  sequence_order: number;
+  action: 'start' | 'stop' | 'restart' | 'command' | 'backup';
+  payload?: string;
+  time_offset_secs: number;
+  continue_on_failure: boolean;
 }
 
 export interface AppSettings {

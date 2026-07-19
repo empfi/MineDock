@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useStore } from '../store';
-import UnsavedChangesBar from '../components/UnsavedChangesBar';
 import { invoke } from '@tauri-apps/api/core';
 import { notify } from '../components/Notifications';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { Code, LayoutList, Loader2, Save } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
@@ -43,9 +43,17 @@ export default function Properties() {
   const [profileMinRam, setProfileMinRam] = useState(1024);
   const [profileMaxRam, setProfileMaxRam] = useState(4096);
   const [profileJava, setProfileJava] = useState('');
+  const [profileRunInContainer, setProfileRunInContainer] = useState(false);
+  const [dockerAvailable, setDockerAvailable] = useState(false);
   const [sysMemory, setSysMemory] = useState<number>(8192);
   const [savedProfile, setSavedProfile] = useState('');
   const [profileLoaded, setProfileLoaded] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>('is_docker_available')
+      .then(setDockerAvailable)
+      .catch(console.error);
+  }, []);
 
   useEffect(() => {
     if (selectedServer) {
@@ -56,7 +64,15 @@ export default function Properties() {
       setProfileMinRam(selectedServer.ram_min);
       setProfileMaxRam(selectedServer.ram_max);
       setProfileJava(selectedServer.java_path);
-      setSavedProfile(JSON.stringify([selectedServer.name, selectedServer.jar_path, selectedServer.ram_min, selectedServer.ram_max, selectedServer.java_path]));
+      setProfileRunInContainer(!!selectedServer.run_in_container);
+      setSavedProfile(JSON.stringify([
+        selectedServer.name,
+        selectedServer.jar_path,
+        selectedServer.ram_min,
+        selectedServer.ram_max,
+        selectedServer.java_path,
+        !!selectedServer.run_in_container
+      ]));
       setProfileLoaded(true);
       
       invoke<number>('get_system_memory').then(setSysMemory).catch(console.error);
@@ -176,9 +192,10 @@ export default function Properties() {
         ramMin: profileMinRam,
         ramMax: profileMaxRam,
         javaPath: profileJava,
+        runInContainer: profileRunInContainer,
       });
       await useStore.getState().fetchServers();
-      setSavedProfile(JSON.stringify([profileName, profileJar, profileMinRam, profileMaxRam, profileJava]));
+      setSavedProfile(JSON.stringify([profileName, profileJar, profileMinRam, profileMaxRam, profileJava, profileRunInContainer]));
       notify('Server settings saved. Restart server to apply changes.', 'success', false);
     } catch (err: any) {
       setError("Failed to save settings: " + err.toString());
@@ -201,16 +218,10 @@ export default function Properties() {
 
   const currentProperties = mode === 'visual' ? stringifyProperties(parsedProps, rawProps) : rawProps;
   const propertiesDirty = !loading && normalizePropsString(currentProperties) !== normalizePropsString(savedRawProps);
-  const profileDirty = profileLoaded && JSON.stringify([profileName, profileJar, profileMinRam, profileMaxRam, profileJava]) !== savedProfile;
+  const profileDirty = profileLoaded && JSON.stringify([profileName, profileJar, profileMinRam, profileMaxRam, profileJava, profileRunInContainer]) !== savedProfile;
   const dirty = propertiesDirty || profileDirty;
-  const resetChanges = () => {
-    setRawProps(savedRawProps);
-    parseProperties(savedRawProps);
-    const saved = JSON.parse(savedProfile || '[]');
-    if (saved.length) {
-      setProfileName(saved[0]); setProfileJar(saved[1]); setProfileMinRam(saved[2]); setProfileMaxRam(saved[3]); setProfileJava(saved[4]);
-    }
-  };
+
+  useUnsavedGuard(dirty, 'Properties');
 
   if (!selectedServer) {
     return <div className="p-8 text-center text-gray-500">Select a server from the sidebar.</div>;
@@ -405,8 +416,30 @@ export default function Properties() {
                 type="text"
                 value={profileJava}
                 onChange={(e) => setProfileJava(e.target.value)}
-                className="bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white focus:outline-none focus:border-blue-500 font-mono text-sm"
+                disabled={profileRunInContainer}
+                className="bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white focus:outline-none focus:border-blue-500 font-mono text-sm disabled:opacity-40"
               />
+            </div>
+
+            <div className="flex flex-col">
+              <label className="text-sm font-medium text-gray-300 mb-2">Run in Docker Container</label>
+              <div className="flex items-center gap-3 bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2">
+                <button
+                  type="button"
+                  disabled={!dockerAvailable}
+                  onClick={() => setProfileRunInContainer(!profileRunInContainer)}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${profileRunInContainer ? 'bg-blue-600' : 'bg-gray-700'} disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${profileRunInContainer ? 'translate-x-5' : 'translate-x-0'}`}
+                  />
+                </button>
+                <span className="text-xs text-gray-400">
+                  {dockerAvailable 
+                    ? "Isolate server environment using Docker."
+                    : "Docker is not running or not installed."}
+                </span>
+              </div>
             </div>
           </div>
 

@@ -81,6 +81,32 @@ pub(crate) fn java_major(java_path: &str) -> Result<u32, String> {
     }
 }
 
+pub fn is_docker_available() -> bool {
+    std::process::Command::new("docker")
+        .arg("info")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+pub fn get_container_running_state(server_id: i64) -> (bool, bool) {
+    let container_name = format!("minedock-server-{}", server_id);
+    let output = std::process::Command::new("docker")
+        .args(&["inspect", "-f", "{{.State.Running}}", &container_name])
+        .output();
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                let running_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                (true, running_str == "true")
+            } else {
+                (false, false)
+            }
+        }
+        Err(_) => (false, false),
+    }
+}
+
 fn is_server_ready(line: &str) -> bool {
     line.to_ascii_lowercase().contains("done (")
 }
@@ -127,11 +153,61 @@ impl ProcessManager {
                 sys.refresh_all();
 
                 for (server_id, pid) in active_targets {
-                    if let Some(process) = sys.process(Pid::from(pid as usize)) {
-                        let cpu = process.cpu_usage();
-                        let memory = process.memory() / 1024 / 1024; // MB
+                    let run_in_container = {
+                        if let Some(state) = app_clone.try_state::<DbState>() {
+                            if let Ok(conn) = state.db.lock() {
+                                crate::database::get_server(&conn, server_id)
+                                    .ok()
+                                    .flatten()
+                                    .map(|s| s.run_in_container)
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    };
 
-                        let _ = app_clone.emit("server-stats", (server_id, cpu, memory));
+                    if run_in_container {
+                        let container_name = format!("minedock-server-{}", server_id);
+                        if let Ok(output) = std::process::Command::new("docker")
+                            .args(&["stats", "--no-stream", "--format", "{{.CPUPerc}} {{.MemUsage}}", &container_name])
+                            .output()
+                        {
+                            let text = String::from_utf8_lossy(&output.stdout);
+                            let parts: Vec<&str> = text.split_whitespace().collect();
+                            if parts.len() >= 2 {
+                                let cpu_str = parts[0].replace('%', "");
+                                let cpu: f32 = cpu_str.parse().unwrap_or(0.0);
+
+                                let mem_str = parts[1];
+                                let mut mem_val: f64 = 0.0;
+                                if mem_str.to_lowercase().contains("gib") {
+                                    let clean = mem_str.to_lowercase().replace("gib", "");
+                                    if let Ok(val) = clean.parse::<f64>() {
+                                        mem_val = val * 1024.0;
+                                    }
+                                } else if mem_str.to_lowercase().contains("mib") {
+                                    let clean = mem_str.to_lowercase().replace("mib", "");
+                                    if let Ok(val) = clean.parse::<f64>() {
+                                        mem_val = val;
+                                    }
+                                } else if mem_str.to_lowercase().contains("kib") {
+                                    let clean = mem_str.to_lowercase().replace("kib", "");
+                                    if let Ok(val) = clean.parse::<f64>() {
+                                        mem_val = val / 1024.0;
+                                    }
+                                }
+                                let _ = app_clone.emit("server-stats", (server_id, cpu, mem_val as u64));
+                            }
+                        }
+                    } else {
+                        if let Some(process) = sys.process(Pid::from(pid as usize)) {
+                            let cpu = process.cpu_usage();
+                            let memory = process.memory() / 1024 / 1024; // MB
+                            let _ = app_clone.emit("server-stats", (server_id, cpu, memory));
+                        }
                     }
                 }
             }
@@ -153,13 +229,20 @@ impl ProcessManager {
                 .map_err(|e| e.to_string())?
                 .ok_or("Server not found")?
         };
-        let required = required_java_version(&server.minecraft_version);
-        let installed = java_major(&server.java_path)?;
-        if installed < required {
-            return Err(format!(
-                "Minecraft {} requires Java {} or newer, but {} uses Java {}",
-                server.minecraft_version, required, server.java_path, installed
-            ));
+        let run_in_container = server.run_in_container;
+        if run_in_container {
+            if !is_docker_available() {
+                return Err("Docker is not running or not installed on this machine".to_string());
+            }
+        } else {
+            let required = required_java_version(&server.minecraft_version);
+            let installed = java_major(&server.java_path)?;
+            if installed < required {
+                return Err(format!(
+                    "Minecraft {} requires Java {} or newer, but {} uses Java {}",
+                    server.minecraft_version, required, server.java_path, installed
+                ));
+            }
         }
 
         // 2. Check if already running
@@ -212,18 +295,57 @@ impl ProcessManager {
         }
 
         // 4. Spawn process
-        let mut command = Command::new(&server.java_path);
-        command
-            .current_dir(&server.install_path)
-            .arg(format!("-Xms{}M", server.ram_min))
-            .arg(format!("-Xmx{}M", server.ram_max));
-        if server.jar_path.starts_with('@') {
-            command.arg(&server.jar_path);
+        let mut command = if run_in_container {
+            let mut cmd = Command::new("docker");
+            let container_name = format!("minedock-server-{}", server_id);
+            let (exists, running) = get_container_running_state(server_id);
+            if running {
+                cmd.args(&["attach", "--sig-proxy=false", &container_name]);
+            } else if exists {
+                cmd.args(&["start", "-i", "-a", &container_name]);
+            } else {
+                let java_version = required_java_version(&server.minecraft_version);
+                let docker_image = format!("eclipse-temurin:{}", java_version);
+                cmd.args(&[
+                    "run",
+                    "-i",
+                    "--name",
+                    &container_name,
+                    "--restart",
+                    "unless-stopped",
+                    "-v",
+                    &format!("{}:/data", server.install_path),
+                    "-p",
+                    &format!("{}:{}", server.port, server.port),
+                    "-w",
+                    "/data",
+                    &docker_image,
+                    "java",
+                    &format!("-Xms{}M", server.ram_min),
+                    &format!("-Xmx{}M", server.ram_max),
+                ]);
+                if server.jar_path.starts_with('@') {
+                    cmd.arg(&server.jar_path);
+                } else {
+                    cmd.args(&["-jar", &server.jar_path]);
+                }
+                cmd.arg("nogui");
+            }
+            cmd
         } else {
-            command.arg("-jar").arg(&server.jar_path);
-        }
+            let mut cmd = Command::new(&server.java_path);
+            cmd.current_dir(&server.install_path)
+                .arg(format!("-Xms{}M", server.ram_min))
+                .arg(format!("-Xmx{}M", server.ram_max));
+            if server.jar_path.starts_with('@') {
+                cmd.arg(&server.jar_path);
+            } else {
+                cmd.arg("-jar").arg(&server.jar_path);
+            }
+            cmd.arg("nogui");
+            cmd
+        };
         let mut child = command
-            .arg("nogui")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .stdin(std::process::Stdio::piped())
@@ -363,33 +485,39 @@ impl ProcessManager {
     }
 
     pub async fn stop_server(&self, server_id: i64) -> Result<(), String> {
-        let stop_command = {
+        let server = {
             let state = self.app.state::<DbState>();
             let conn = state.db.lock().map_err(|_| "Failed to lock database")?;
-            let server = get_server(&conn, server_id)
+            get_server(&conn, server_id)
                 .map_err(|e| e.to_string())?
-                .ok_or("Server not found")?;
-            if server.server_type == "velocity" {
-                b"end\n".as_slice()
-            } else {
-                b"stop\n".as_slice()
-            }
+                .ok_or("Server not found")?
         };
+
+        {
+            let state = self.app.state::<DbState>();
+            let conn = state.db.lock();
+            if let Ok(conn) = conn {
+                let _ = update_server_status(&conn, server_id, "stopping");
+            }
+        }
+        self.app
+            .emit("server-status-changed", (server_id, "stopping"))
+            .unwrap_or_default();
+
+        let stop_command = if server.server_type == "velocity" {
+            b"end\n".as_slice()
+        } else {
+            b"stop\n".as_slice()
+        };
+
         let mut processes = self.processes.lock().await;
         if let Some(info) = processes.get_mut(&server_id) {
-            {
-                let state = self.app.state::<DbState>();
-                let conn = state.db.lock();
-                if let Ok(conn) = conn {
-                    let _ = update_server_status(&conn, server_id, "stopping");
-                }
-            }
-            self.app
-                .emit("server-status-changed", (server_id, "stopping"))
-                .unwrap_or_default();
-
             let _ = info.stdin.write_all(stop_command).await;
             let _ = info.stdin.flush().await;
+        } else if server.run_in_container {
+            let _ = std::process::Command::new("docker")
+                .args(&["stop", &format!("minedock-server-{}", server_id)])
+                .spawn();
         } else {
             return Err("Server not running".to_string());
         }
@@ -397,33 +525,50 @@ impl ProcessManager {
     }
 
     pub async fn kill_server(&self, server_id: i64) -> Result<(), String> {
-        let processes = self.processes.lock().await;
-        if let Some(info) = processes.get(&server_id) {
-            let pid = info.pid;
+        let server = {
+            let state = self.app.state::<DbState>();
+            let conn = state.db.lock().map_err(|_| "Failed to lock database")?;
+            get_server(&conn, server_id)
+                .map_err(|e| e.to_string())?
+                .ok_or("Server not found")?
+        };
 
-            {
-                let state = self.app.state::<DbState>();
-                let conn = state.db.lock();
-                if let Ok(conn) = conn {
-                    let _ = update_server_status(&conn, server_id, "stopping");
+        {
+            let state = self.app.state::<DbState>();
+            let conn = state.db.lock();
+            if let Ok(conn) = conn {
+                let _ = update_server_status(&conn, server_id, "stopping");
+            }
+        }
+        self.app
+            .emit("server-status-changed", (server_id, "stopping"))
+            .unwrap_or_default();
+
+        let mut processes = self.processes.lock().await;
+        if let Some(info) = processes.remove(&server_id) {
+            if server.run_in_container {
+                let _ = std::process::Command::new("docker")
+                    .args(&["kill", &format!("minedock-server-{}", server_id)])
+                    .spawn();
+            } else {
+                let pid = info.pid;
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(&["/F", "/PID", &pid.to_string()])
+                        .spawn();
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = std::process::Command::new("kill")
+                        .args(&["-9", &pid.to_string()])
+                        .spawn();
                 }
             }
-            self.app
-                .emit("server-status-changed", (server_id, "stopping"))
-                .unwrap_or_default();
-
-            #[cfg(target_os = "windows")]
-            {
-                let _ = std::process::Command::new("taskkill")
-                    .args(&["/F", "/PID", &pid.to_string()])
-                    .spawn();
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = std::process::Command::new("kill")
-                    .args(&["-9", &pid.to_string()])
-                    .spawn();
-            }
+        } else if server.run_in_container {
+            let _ = std::process::Command::new("docker")
+                .args(&["kill", &format!("minedock-server-{}", server_id)])
+                .spawn();
         } else {
             return Err("Server not running".to_string());
         }

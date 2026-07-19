@@ -9,6 +9,7 @@ mod models;
 mod paths;
 mod plugins;
 mod process;
+mod scheduler;
 pub mod tunnel;
 mod worlds;
 
@@ -39,6 +40,37 @@ pub fn run() {
             app.manage(discord::DiscordState { tx });
             discord::start_rpc_worker(rx);
             tunnel::start_client(app.handle().clone());
+
+            // Start background task scheduler
+            scheduler::start_scheduler(app.handle().clone());
+
+            // Auto-reattach to running Docker containers on startup
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                let servers = {
+                    if let Some(state) = app_handle.try_state::<database::DbState>() {
+                        if let Ok(conn) = state.db.lock() {
+                            database::get_servers(&conn).unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    }
+                };
+                let pm = app_handle.state::<process::ProcessManager>();
+                for server in servers {
+                    if server.run_in_container {
+                        if let Some(id) = server.id {
+                            let (_, running) = process::get_container_running_state(id);
+                            if running {
+                                let _ = pm.start_server(id).await;
+                            }
+                        }
+                    }
+                }
+            });
 
             Ok(())
         })
@@ -75,6 +107,9 @@ pub fn run() {
             commands::download_software,
             commands::install_loader,
             commands::get_directory_contents,
+            commands::search_server_files,
+            commands::move_file_or_folder,
+            commands::move_files_or_folders,
             commands::read_file_content,
             commands::get_log_summaries,
             commands::read_log_content,
@@ -113,6 +148,12 @@ pub fn run() {
             ai::cancel_ai,
             ai::ai_chat,
             ai::get_ai_logo,
+            commands::is_docker_available,
+            commands::get_server_schedules,
+            commands::add_server_schedule,
+            commands::update_server_schedule,
+            commands::delete_server_schedule,
+            commands::trigger_schedule_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

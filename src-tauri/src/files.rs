@@ -11,6 +11,13 @@ pub struct FileInfo {
     pub modified: u64, // unix timestamp
 }
 
+#[derive(Serialize)]
+pub struct FileSearchResult {
+    pub path: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct LogSummary {
     pub name: String,
@@ -114,6 +121,93 @@ pub fn list_directory(base_dir: &str, sub_path: &str) -> Result<Vec<FileInfo>, S
     files.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
 
     Ok(files)
+}
+
+pub fn search_files(base_dir: &str, query: &str) -> Result<Vec<FileSearchResult>, String> {
+    let root = sanitize_path(base_dir, ".")?;
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut results = Vec::new();
+    let mut directories = vec![root.clone()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(directory).map_err(|e| e.to_string())?.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(".minedock-") {
+                continue;
+            }
+            let file_type = entry.file_type().map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if file_type.is_dir() {
+                directories.push(path.clone());
+            }
+            let relative = path
+                .strip_prefix(&root)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative.to_lowercase().contains(&query) {
+                results.push(FileSearchResult {
+                    path: relative,
+                    is_dir: file_type.is_dir(),
+                    size: entry.metadata().map_err(|e| e.to_string())?.len(),
+                });
+                if results.len() == 200 {
+                    return Ok(results);
+                }
+            }
+        }
+    }
+    results.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(results)
+}
+
+pub fn move_entry(base_dir: &str, source_path: &str, destination_path: &str) -> Result<(), String> {
+    let source = sanitize_path(base_dir, source_path)?;
+    let destination = sanitize_path(base_dir, destination_path)?;
+    if destination.exists() {
+        return Err("A file or folder with that name already exists".to_string());
+    }
+    if source.is_dir() && destination.starts_with(&source) {
+        return Err("A folder cannot be moved inside itself".to_string());
+    }
+    fs::rename(source, destination).map_err(|e| e.to_string())
+}
+
+pub fn move_entries(base_dir: &str, source_paths: &[String], destination_dir: &str) -> Result<(), String> {
+    let destination_dir = sanitize_path(base_dir, destination_dir)?;
+    if !destination_dir.is_dir() {
+        return Err("Move destination is not a folder".to_string());
+    }
+    let mut moves = Vec::new();
+    for source_path in source_paths {
+        let source = sanitize_path(base_dir, source_path)?;
+        let destination = destination_dir.join(source.file_name().ok_or("Invalid source path")?);
+        if source == destination {
+            continue;
+        }
+        if destination.exists() {
+            return Err(format!("{} already exists", destination.display()));
+        }
+        if source.is_dir() && destination.starts_with(&source) {
+            return Err("A folder cannot be moved inside itself".to_string());
+        }
+        if moves.iter().any(|(_, existing): &(PathBuf, PathBuf)| existing == &destination) {
+            return Err("Selected entries contain duplicate names".to_string());
+        }
+        moves.push((source, destination));
+    }
+    for index in 0..moves.len() {
+        if let Err(error) = fs::rename(&moves[index].0, &moves[index].1) {
+            for rollback in moves[..index].iter().rev() {
+                let _ = fs::rename(&rollback.1, &rollback.0);
+            }
+            return Err(error.to_string());
+        }
+    }
+    Ok(())
 }
 
 pub fn read_text_file(base_dir: &str, sub_path: &str) -> Result<String, String> {
@@ -340,7 +434,7 @@ pub fn import_paths(base_dir: &str, sub_path: &str, paths: &[String]) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_pending_deletes, create_folder, import_paths, PENDING_DELETES};
+    use super::{apply_pending_deletes, create_folder, import_paths, move_entry, search_files, PENDING_DELETES};
 
     #[test]
     fn creates_missing_absolute_base_directory() {
@@ -374,6 +468,31 @@ mod tests {
             "test"
         );
         std::fs::remove_file(source).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn finds_nested_files_by_relative_path() {
+        let root = std::env::temp_dir().join(format!("minedock-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("plugins").join("PlugManX")).unwrap();
+        std::fs::write(root.join("plugins").join("PlugManX").join("config.yml"), "test").unwrap();
+        let results = search_files(root.to_str().unwrap(), "plugmanx/config").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "plugins/PlugManX/config.yml");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn moves_file_between_server_folders() {
+        let root = std::env::temp_dir().join(format!("minedock-move-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("from")).unwrap();
+        std::fs::create_dir_all(root.join("to")).unwrap();
+        std::fs::write(root.join("from").join("config.yml"), "test").unwrap();
+        move_entry(root.to_str().unwrap(), "from/config.yml", "to/config.yml").unwrap();
+        assert!(!root.join("from").join("config.yml").exists());
+        assert!(root.join("to").join("config.yml").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useStore } from './store';
-import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, PackageSearch, Skull, HeartPulse, Search, Brain } from 'lucide-react';
+import { Server, Settings, Terminal, FolderGit2, Save, Download, FileText, Database, Plus, Users, Globe2, Play, Square, RotateCw, ArrowLeft, Copy, X, Loader2, PackageSearch, Skull, HeartPulse, Search, Brain, Clock } from 'lucide-react';
 import { cn } from './lib/utils';
 
 import Notifications, { NotificationCenter } from './components/Notifications';
@@ -17,15 +17,15 @@ import SafeApplyModal from './components/SafeApplyModal';
 import { failArmedSafeApply, observeSafeApplyStatus } from './lib/safeApply';
 import { getSoftwareInfo } from './lib/software';
 import CommandPalette from './components/CommandPalette';
-import { confirmNavigation } from './lib/navigationGuard';
+import { confirmNavigationAsync } from './lib/navigationGuard';
 function Sidebar() {
   const { servers, selectedServerId, setSelectedServer } = useStore();
   const selectedServer = servers.find(s => s.id === selectedServerId);
   const location = useLocation();
   const navigate = useNavigate();
   const [serverAction, setServerAction] = useState<'start' | 'stop' | 'restart' | 'kill' | null>(null);
-  const serverPaths = ['/console', '/health', '/players', '/additions', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs'];
-  const managingServer = Boolean(selectedServer && serverPaths.includes(location.pathname));
+  const serverPaths = ['/console', '/health', '/players', '/additions', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs', '/schedules'];
+  const managingServer = Boolean(selectedServer && serverPaths.some(p => location.pathname === p || location.pathname.startsWith(p + '/')));
 
   const links = [
     { to: "/", icon: Database, label: "Overview", exact: true },
@@ -45,6 +45,7 @@ function Sidebar() {
     { to: "/backups", icon: Database, label: "Backups" },
     { to: "/versions", icon: Download, label: "Versions" },
     { to: "/logs", icon: FileText, label: "Logs" },
+    { to: "/schedules", icon: Clock, label: "Schedules" },
   ];
 
   const runServerAction = async (action: 'start' | 'stop' | 'restart' | 'kill') => {
@@ -78,8 +79,8 @@ function Sidebar() {
     }
   };
 
-  const leaveServer = () => {
-    if (!confirmNavigation()) return;
+  const leaveServer = async () => {
+    if (!(await confirmNavigationAsync())) return;
     setSelectedServer(null);
     navigate('/servers');
   };
@@ -109,6 +110,12 @@ function Sidebar() {
             <NavLink
               key={link.to}
               to={link.to}
+              onClick={async (e) => {
+                e.preventDefault();
+                if (await confirmNavigationAsync()) {
+                  navigate(link.to);
+                }
+              }}
               id={link.to === '/servers' ? 'tour-servers-tab' : undefined}
               end={link.exact}
               aria-label={link.label}
@@ -131,6 +138,12 @@ function Sidebar() {
                 <NavLink
                   key={link.to}
                   to={link.to}
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    if (await confirmNavigationAsync()) {
+                      navigate(link.to);
+                    }
+                  }}
                   id={link.to === '/servers' ? 'tour-servers-tab' : undefined}
                   aria-label={link.label}
                   title={link.label}
@@ -274,7 +287,9 @@ function Layout() {
   const selectedServer = servers.find(server => server.id === selectedServerId);
   const location = useLocation();
   const navigate = useNavigate();
-  const managingServer = ['/console', '/players', '/additions', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs'].includes(location.pathname);
+  const serverPaths = ['/console', '/health', '/players', '/additions', '/worlds', '/files', '/properties', '/versions', '/backups', '/logs', '/schedules'];
+
+  const showTabBar = !['/settings', '/assistant'].includes(location.pathname) && openServerIds.length > 0;
   const [draggedTab, setDraggedTab] = useState<number | null>(null);
   const [serverPickerOpen, setServerPickerOpen] = useState(false);
   const [serverSearch, setServerSearch] = useState('');
@@ -454,12 +469,18 @@ function Layout() {
       <div className="flex flex-1 overflow-hidden min-h-0">
         <Sidebar />
         <main className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        {managingServer && (
-          <div className="server-tabs flex h-10 flex-shrink-0 border-b border-[#2a2b2f] bg-[#141517]">
-            <div className="relative min-w-0 flex-1 h-full">
-              <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-[#141517] to-transparent" />
-              <div className="w-full h-full overflow-x-auto overflow-y-hidden" onWheel={handleTabStripWheel}>
-                <div className="flex h-full min-w-max">
+        <div
+          className={cn(
+            "server-tabs flex flex-shrink-0 bg-[#141517] transition-all duration-300 ease-in-out overflow-hidden",
+            showTabBar
+              ? "h-10 opacity-100 border-b border-[#2a2b2f]"
+              : "h-0 opacity-0 border-b-0 border-transparent pointer-events-none"
+          )}
+        >
+          <div className="relative min-w-0 flex-1 h-full">
+            <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-[#141517] to-transparent" />
+            <div className="w-full h-full overflow-x-auto overflow-y-hidden" onWheel={handleTabStripWheel}>
+              <div className="flex h-full min-w-max">
                 {openServerIds.map((id, index) => {
                   const server = servers.find(item => item.id === id);
                   if (!server) return null;
@@ -478,9 +499,20 @@ function Layout() {
                           setDraggedTab(index);
                         }
                       }}
-                      onClick={() => { if (confirmNavigation()) setSelectedServer(id); }}
-                      onAuxClick={event => {
-                        if (event.button === 1) closeTab(id);
+                      onClick={async () => {
+                        if (await confirmNavigationAsync()) {
+                          setSelectedServer(id);
+                          if (!serverPaths.some(p => location.pathname === p || location.pathname.startsWith(p + '/'))) {
+                            navigate('/console');
+                          }
+                        }
+                      }}
+                      onAuxClick={async event => {
+                        if (event.button === 1) {
+                          if (await confirmNavigationAsync()) {
+                            closeTab(id);
+                          }
+                        }
                       }}
                       className={cn(
                         'group relative z-0 flex min-w-36 max-w-56 cursor-grab items-center gap-2 border-r border-[#2a2b2f] px-3 text-xs active:cursor-grabbing',
@@ -496,9 +528,9 @@ function Layout() {
                         role="button"
                         aria-label={`Close ${server.name}`}
                         onPointerDown={event => event.stopPropagation()}
-                        onClick={event => {
+                        onClick={async event => {
                           event.stopPropagation();
-                          if (confirmNavigation()) closeTab(id);
+                          if (await confirmNavigationAsync()) closeTab(id);
                         }}
                         className="rounded p-0.5 text-gray-600 hover:bg-[#34353a] hover:text-white"
                       ><X size={13} /></span>
@@ -509,83 +541,82 @@ function Layout() {
             </div>
           </div>
           <div ref={serverPickerRef} className="relative flex-shrink-0 border-l border-[#2a2b2f]">
-              <button
-                onClick={() => setServerPickerOpen(open => !open)}
-                className="relative z-20 flex h-full w-10 items-center justify-center text-gray-500 hover:bg-[#1b1c1f] hover:text-white"
-                title="Open another server"
-                aria-label="Open another server"
-              >
-                <Plus size={16} />
-              </button>
-              {serverPickerOpen && (
-                <div className="origin-top-right popover-enter fixed z-50 mt-1 w-56 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
-                  <div className="p-1">
-                    <input
-                      autoFocus
-                      value={serverSearch}
-                      onChange={event => setServerSearch(event.target.value)}
-                      placeholder="Search servers..."
-                      className="w-full rounded border border-[#2a2b2f] bg-[#0f0f11] px-2.5 py-1.5 text-sm text-white outline-none placeholder:text-gray-600 focus:border-blue-500"
-                    />
-                  </div>
-                  {servers.filter(server =>
-                    server.id &&
-                    !openServerIds.includes(server.id) &&
-                    server.name.toLowerCase().includes(serverSearch.toLowerCase())
-                  ).map(server => (
-                    <button
-                      key={server.id}
-                      onClick={() => {
-                        if (!confirmNavigation()) return;
-                        setSelectedServer(server.id!);
-                        setServerPickerOpen(false);
-                        setServerSearch('');
-                      }}
-                      className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white"
-                    >
-                      <img src={getSoftwareInfo(server.server_type).icon} alt="" className="h-4 w-4 object-contain" />
-                      <span className="truncate">{server.name}</span>
-                    </button>
-                  ))}
-                  {!servers.some(server =>
-                    server.id &&
-                    !openServerIds.includes(server.id) &&
-                    server.name.toLowerCase().includes(serverSearch.toLowerCase())
-                  ) && (
-                    <div className="px-3 py-2 text-sm text-gray-600">{serverSearch ? 'No matching servers' : 'All servers are open'}</div>
-                  )}
+            <button
+              onClick={() => setServerPickerOpen(open => !open)}
+              className="relative z-20 flex h-full w-10 items-center justify-center text-gray-500 hover:bg-[#1b1c1f] hover:text-white"
+              title="Open another server"
+              aria-label="Open another server"
+            >
+              <Plus size={16} />
+            </button>
+            {serverPickerOpen && (
+              <div className="origin-top-right popover-enter absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
+                <div className="p-1">
+                  <input
+                    autoFocus
+                    value={serverSearch}
+                    onChange={event => setServerSearch(event.target.value)}
+                    placeholder="Search servers..."
+                    className="w-full rounded border border-[#2a2b2f] bg-[#0f0f11] px-2.5 py-1.5 text-sm text-white outline-none placeholder:text-gray-600 focus:border-blue-500"
+                  />
                 </div>
-              )}
-            </div>
-            {settings?.tunnel_enabled && selectedServer && (
-              <div className="sticky right-0 ml-auto flex flex-shrink-0 items-center border-l border-[#2a2b2f] bg-[#141517] px-2">
-                <div className={`overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-out ${(selectedServer.share_enabled ?? true) && !closingShare ? 'mr-2 max-w-64 opacity-100' : 'mr-0 max-w-0 opacity-0'}`}>
+                {servers.filter(server =>
+                  server.id &&
+                  !openServerIds.includes(server.id) &&
+                  server.name.toLowerCase().includes(serverSearch.toLowerCase())
+                ).map(server => (
                   <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(`host.hyperplex.de:${selectedServer.port}`);
-                      notify('Public address copied.', 'success', false);
+                    key={server.id}
+                    onClick={async () => {
+                      if (!(await confirmNavigationAsync())) return;
+                      setSelectedServer(server.id ?? null);
+                      setServerPickerOpen(false);
+                      setServerSearch('');
                     }}
-                    className="flex whitespace-nowrap items-center gap-2 px-2 font-mono text-xs text-blue-400 hover:text-blue-300"
-                    title="Copy public address"
+                    className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white"
                   >
-                    host.hyperplex.de:{selectedServer.port}
-                    <Copy size={13} className="text-gray-500" />
+                    <img src={getSoftwareInfo(server.server_type).icon} alt="" className="h-4 w-4 object-contain" />
+                    <span className="truncate">{server.name}</span>
                   </button>
-                </div>
-                <button
-                  onClick={() => setSharing(!(selectedServer.share_enabled ?? true))}
-                  disabled={sharingBusy}
-                  role="switch"
-                  aria-checked={selectedServer.share_enabled ?? true}
-                  title={(selectedServer.share_enabled ?? true) ? 'Disable public sharing' : 'Enable public sharing'}
-                  className={`relative h-5 w-9 flex-shrink-0 rounded-full transition-colors duration-200 disabled:opacity-50 ${(selectedServer.share_enabled ?? true) ? 'bg-blue-600' : 'bg-[#34353a]'}`}
-                >
-                  <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform duration-200 ${(selectedServer.share_enabled ?? true) ? 'translate-x-4' : 'translate-x-0'}`} />
-                </button>
+                ))}
+                {!servers.some(server =>
+                  server.id &&
+                  !openServerIds.includes(server.id) &&
+                  server.name.toLowerCase().includes(serverSearch.toLowerCase())
+                ) && (
+                  <div className="px-3 py-2 text-sm text-gray-600">{serverSearch ? 'No matching servers' : 'All servers are open'}</div>
+                )}
               </div>
             )}
           </div>
-        )}
+          {settings?.tunnel_enabled && selectedServer && (
+            <div className="sticky right-0 ml-auto flex flex-shrink-0 items-center border-l border-[#2a2b2f] bg-[#141517] px-2">
+              <div className={`overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-out ${(selectedServer.share_enabled ?? true) && !closingShare ? 'mr-2 max-w-64 opacity-100' : 'mr-0 max-w-0 opacity-0'}`}>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`host.hyperplex.de:${selectedServer.port}`);
+                    notify('Public address copied.', 'success', false);
+                  }}
+                  className="flex whitespace-nowrap items-center gap-2 px-2 font-mono text-xs text-blue-400 hover:text-blue-300"
+                  title="Copy public address"
+                >
+                  host.hyperplex.de:{selectedServer.port}
+                  <Copy size={13} className="text-gray-500" />
+                </button>
+              </div>
+              <button
+                onClick={() => setSharing(!(selectedServer.share_enabled ?? true))}
+                disabled={sharingBusy}
+                role="switch"
+                aria-checked={selectedServer.share_enabled ?? true}
+                title={(selectedServer.share_enabled ?? true) ? 'Disable public sharing' : 'Enable public sharing'}
+                className={`relative h-5 w-9 flex-shrink-0 rounded-full transition-colors duration-200 disabled:opacity-50 ${(selectedServer.share_enabled ?? true) ? 'bg-blue-600' : 'bg-[#34353a]'}`}
+              >
+                <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform duration-200 ${(selectedServer.share_enabled ?? true) ? 'translate-x-4' : 'translate-x-0'}`} />
+              </button>
+            </div>
+          )}
+        </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
         <AppRoutes />
         </div>

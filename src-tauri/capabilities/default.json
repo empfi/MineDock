@@ -16,7 +16,14 @@
     "core:window:allow-close",
     "core:window:allow-show",
     "opener:default",
-    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "vscode://file/*" }]
+    },
     "dialog:default"
   ]
 }

@@ -4,7 +4,7 @@ import { Activity, Database, Download, FolderGit2, Globe2, HeartPulse, PackageSe
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { getSoftwareInfo } from '../lib/software';
-import { confirmNavigation } from '../lib/navigationGuard';
+import { confirmNavigationAsync } from '../lib/navigationGuard';
 import { notify } from './Notifications';
 
 const pages = [
@@ -42,7 +42,7 @@ export default function CommandPalette() {
 
   const items = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const navigateTo = (path: string) => { if (confirmNavigation()) navigate(path); };
+    const navigateTo = async (path: string) => { if (await confirmNavigationAsync()) navigate(path); };
     const serverAction = async (action: 'start' | 'stop' | 'restart') => {
       if (!selected?.id) return;
       try {
@@ -74,7 +74,7 @@ export default function CommandPalette() {
         label: server.name,
         detail: `${getSoftwareInfo(server.server_type).name} ${server.minecraft_version}`,
         icon: Server,
-        run: () => { if (confirmNavigation()) { setSelectedServer(server.id ?? null); navigate('/console'); } },
+        run: async () => { if (await confirmNavigationAsync()) { setSelectedServer(server.id ?? null); navigate('/console'); } },
         disabled: false,
       })),
     ].filter(item => !needle || `${item.label} ${item.detail}`.toLowerCase().includes(needle));

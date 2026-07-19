@@ -19,6 +19,8 @@ import Worlds from '../pages/Worlds';
 import Additions from '../pages/Additions';
 import Health from '../pages/Health';
 import Assistant from '../pages/Assistant';
+import Schedules from '../pages/Schedules';
+import ScheduleEditor from '../pages/ScheduleEditor';
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Overview',
@@ -36,6 +38,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/logs': 'Logs',
   '/health': 'Health',
   '/assistant': 'DockAI',
+  '/schedules': 'Schedules',
 };
 
 function ServerRequired({ children }: { children: React.ReactNode }) {
@@ -77,6 +80,8 @@ export default function AppRoutes() {
         <Route path="/backups" element={<ServerRequired><Backups /></ServerRequired>} />
         <Route path="/logs" element={<ServerRequired><Logs /></ServerRequired>} />
         <Route path="/health" element={<ServerRequired><Health /></ServerRequired>} />
+        <Route path="/schedules" element={<ServerRequired><Schedules /></ServerRequired>} />
+        <Route path="/schedules/:scheduleId" element={<ServerRequired><ScheduleEditor /></ServerRequired>} />
       </Routes>
     </div>}
     </>

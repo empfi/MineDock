@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import Button from './Button';
 
 interface ConfirmDialogProps {
   title: string;
@@ -49,9 +50,9 @@ export default function ConfirmDialog({ title, message, confirmLabel, danger = t
             )}
           </div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-[#2a2b2f] bg-[#141517] p-4">
-          <button type="button" onClick={onCancel} disabled={busy} className="rounded-md bg-[#2a2b2f] px-4 py-2 text-sm text-white hover:bg-[#3a3b3f] disabled:opacity-50">Cancel</button>
-          <button type="button" onClick={onConfirm} disabled={busy} className={`action-button px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>{busy ? 'Working…' : confirmLabel}</button>
+        <div className="flex justify-end gap-3 border-t border-[#2a2b2f] bg-[#141517] p-4">
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} disabled={busy}>{busy ? 'Working…' : confirmLabel}</Button>
         </div>
       </div>
     </div>

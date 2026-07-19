@@ -21,10 +21,38 @@ pub struct Server {
     pub port: i32,
     #[serde(default = "default_true")]
     pub share_enabled: bool,
+    #[serde(default)]
+    pub run_in_container: bool,
     #[serde(skip_deserializing)]
     pub install_path_exists: Option<bool>,
     #[serde(skip_deserializing)]
     pub backups_path_exists: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ServerSchedule {
+    pub id: Option<i64>,
+    pub server_id: i64,
+    pub name: String,
+    pub cron_expression: String,
+    pub is_active: bool,
+    #[serde(default)]
+    pub require_online: bool,
+    #[serde(default)]
+    pub tasks: Vec<ScheduleTask>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScheduleTask {
+    pub id: Option<i64>,
+    pub schedule_id: Option<i64>,
+    pub sequence_order: i32,
+    pub action: String, // "start", "stop", "restart", "command", "backup"
+    pub payload: Option<String>,
+    #[serde(default)]
+    pub time_offset_secs: i32,
+    #[serde(default = "default_true")]
+    pub continue_on_failure: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
