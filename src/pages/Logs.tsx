@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertCircle, AlertTriangle, ChevronDown, FileText, Info, Loader2, RefreshCw } from 'lucide-react';
+import { AlertCircle, AlertTriangle, ChevronDown, FileText, Info, Loader2, RefreshCw, Copy } from 'lucide-react';
 import { useStore } from '../store';
 import ErrorState from '../components/ErrorState';
 import EmptyState from '../components/EmptyState';
-import { ListSkeleton } from '../components/LoadingState';
+import { ListSkeleton, LogSkeleton } from '../components/LoadingState';
+import { notify } from '../components/Notifications';
 
 type LogSummary = {
   name: string;
@@ -81,6 +82,8 @@ export default function Logs() {
   const [query, setQuery] = useState(() => localStorage.getItem('minedock:logs_query') || '');
   const [level, setLevel] = useState(() => localStorage.getItem('minedock:logs_level') || 'all');
 
+  const [refreshKey, setRefreshKey] = useState(0);
+
   const loadLogs = async () => {
     if (!server) return;
     setLoading(true);
@@ -100,11 +103,11 @@ export default function Logs() {
   }, [selectedServerId]);
 
   useEffect(() => {
-    if (!server || !openLog || contents[openLog] !== undefined) return;
+    if (!server || !openLog) return;
     invoke<string>('read_log_content', { baseDir: server.install_path, name: openLog })
       .then(content => setContents(current => ({ ...current, [openLog]: content })))
       .catch(cause => setError(String(cause)));
-  }, [openLog, server?.install_path]);
+  }, [openLog, server?.install_path, refreshKey]);
 
   if (!server) return <div className="p-8 text-center text-gray-500">Select a server from the sidebar.</div>;
   const filteredLogs = logs.filter(log => log.name.toLowerCase().includes(query.toLowerCase()) && (level === 'all' || (level === 'errors' ? log.errors > 0 : log.warnings > 0)));
@@ -116,7 +119,7 @@ export default function Logs() {
           <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Logs</h1>
           <p className="text-gray-400">Latest and archived server logs</p>
         </div>
-        <button onClick={() => { setContents({}); setVisibleLogCount(15); loadLogs(); }} disabled={loading} className="flex items-center gap-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50">
+        <button onClick={() => { setContents({}); setRefreshKey(prev => prev + 1); setVisibleLogCount(15); loadLogs(); }} disabled={loading} className="flex items-center gap-2 bg-[#2a2b2f] hover:bg-[#3a3b3f] text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50">
           <RefreshCw size={18} className={loading ? 'animate-spin' : ''} /> Refresh
         </button>
       </div>
@@ -153,12 +156,29 @@ export default function Logs() {
                 </button>
 
                 {open && (
-                  <div className="border-t border-[#2a2b2f] bg-[#09090a] max-h-[34rem] overflow-auto py-0 font-mono text-xs leading-relaxed">
-                    {content === undefined ? (
-                      <div className="py-10 flex justify-center text-gray-600"><Loader2 className="animate-spin" /></div>
-                    ) : (
-                      <LogViewer content={content} />
+                  <div className="border-t border-[#2a2b2f] relative">
+                    {content !== undefined && (
+                      <div className="absolute right-4 top-3 z-10 flex gap-2">
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await navigator.clipboard.writeText(content);
+                            notify('Log contents copied to clipboard.', 'success', false);
+                          }}
+                          className="bg-[#2a2b2f] hover:bg-[#3a3b3f] text-gray-300 hover:text-white px-2.5 py-1.5 text-xs rounded border border-[#34353a] transition-all flex items-center gap-1.5 font-sans font-medium"
+                        >
+                          <Copy size={13} />
+                          Copy log
+                        </button>
+                      </div>
                     )}
+                    <div className="bg-[#09090a] max-h-[34rem] overflow-auto py-0 font-mono text-xs leading-relaxed">
+                      {content === undefined ? (
+                        <LogSkeleton />
+                      ) : (
+                        <LogViewer content={content} />
+                      )}
+                    </div>
                   </div>
                 )}
               </section>

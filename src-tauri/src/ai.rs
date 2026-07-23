@@ -305,7 +305,7 @@ async fn create_server_from_args(app: &AppHandle, args: &serde_json::Value) -> R
         created_at: chrono::Local::now().to_rfc3339(),
         last_started_at: None,
         port,
-        share_enabled: true,
+        share_enabled: false,
         install_path_exists: None,
         backups_path_exists: None,
     };
@@ -703,7 +703,28 @@ pub async fn ai_chat(app: AppHandle, state: State<'_, AiState>, messages: Vec<Ch
             let server = if name != "create_server" {
                 let db = app.state::<DbState>();
                 let conn = db.db.lock().map_err(|_| "Database unavailable")?;
-                Some(get_server(&conn, server_id.ok_or("Select a server for marketplace tools")?).map_err(|e| e.to_string())?.ok_or("Selected server not found")?)
+                let id = match server_id {
+                    Some(id) => id,
+                    None => {
+                        conversation.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": "Error: No server is currently selected in MineDock. Please tell the user to select one of their servers in the left sidebar first."
+                        }));
+                        continue;
+                    }
+                };
+                match get_server(&conn, id).map_err(|e| e.to_string())? {
+                    Some(s) => Some(s),
+                    None => {
+                        conversation.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": "Error: Selected server not found. Tell the user to select a valid server from the sidebar."
+                        }));
+                        continue;
+                    }
+                }
             } else { None };
             let result = match name {
                 "search_marketplace" => {

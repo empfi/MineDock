@@ -350,6 +350,11 @@ function Layout() {
   };
 
   useEffect(() => {
+    const savedTheme = localStorage.getItem('minedock-theme') || 'classic';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  }, []);
+
+  useEffect(() => {
     let active = true;
     fetchServers();
     fetchSettings();
@@ -540,82 +545,100 @@ function Layout() {
               </div>
             </div>
           </div>
-          <div ref={serverPickerRef} className="relative flex-shrink-0 border-l border-[#2a2b2f]">
-            <button
-              onClick={() => setServerPickerOpen(open => !open)}
-              className="relative z-20 flex h-full w-10 items-center justify-center text-gray-500 hover:bg-[#1b1c1f] hover:text-white"
-              title="Open another server"
-              aria-label="Open another server"
-            >
-              <Plus size={16} />
-            </button>
-            {serverPickerOpen && (
-              <div className="origin-top-right popover-enter absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
-                <div className="p-1">
-                  <input
-                    autoFocus
-                    value={serverSearch}
-                    onChange={event => setServerSearch(event.target.value)}
-                    placeholder="Search servers..."
-                    className="w-full rounded border border-[#2a2b2f] bg-[#0f0f11] px-2.5 py-1.5 text-sm text-white outline-none placeholder:text-gray-600 focus:border-blue-500"
-                  />
-                </div>
-                {servers.filter(server =>
-                  server.id &&
-                  !openServerIds.includes(server.id) &&
-                  server.name.toLowerCase().includes(serverSearch.toLowerCase())
-                ).map(server => (
-                  <button
-                    key={server.id}
-                    onClick={async () => {
-                      if (!(await confirmNavigationAsync())) return;
-                      setSelectedServer(server.id ?? null);
-                      setServerPickerOpen(false);
-                      setServerSearch('');
-                    }}
-                    className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white"
-                  >
-                    <img src={getSoftwareInfo(server.server_type).icon} alt="" className="h-4 w-4 object-contain" />
-                    <span className="truncate">{server.name}</span>
-                  </button>
-                ))}
-                {!servers.some(server =>
-                  server.id &&
-                  !openServerIds.includes(server.id) &&
-                  server.name.toLowerCase().includes(serverSearch.toLowerCase())
-                ) && (
-                  <div className="px-3 py-2 text-sm text-gray-600">{serverSearch ? 'No matching servers' : 'All servers are open'}</div>
-                )}
-              </div>
-            )}
-          </div>
-          {settings?.tunnel_enabled && selectedServer && (
-            <div className="sticky right-0 ml-auto flex flex-shrink-0 items-center border-l border-[#2a2b2f] bg-[#141517] px-2">
-              <div className={`overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-out ${(selectedServer.share_enabled ?? true) && !closingShare ? 'mr-2 max-w-64 opacity-100' : 'mr-0 max-w-0 opacity-0'}`}>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`host.hyperplex.de:${selectedServer.port}`);
-                    notify('Public address copied.', 'success', false);
-                  }}
-                  className="flex whitespace-nowrap items-center gap-2 px-2 font-mono text-xs text-blue-400 hover:text-blue-300"
-                  title="Copy public address"
-                >
-                  host.hyperplex.de:{selectedServer.port}
-                  <Copy size={13} className="text-gray-500" />
-                </button>
-              </div>
+          {servers.some(server => server.id && !openServerIds.includes(server.id)) && (
+            <div ref={serverPickerRef} className="relative flex-shrink-0 border-l border-[#2a2b2f]">
               <button
-                onClick={() => setSharing(!(selectedServer.share_enabled ?? true))}
-                disabled={sharingBusy}
-                role="switch"
-                aria-checked={selectedServer.share_enabled ?? true}
-                title={(selectedServer.share_enabled ?? true) ? 'Disable public sharing' : 'Enable public sharing'}
-                className={`relative h-5 w-9 flex-shrink-0 rounded-full transition-colors duration-200 disabled:opacity-50 ${(selectedServer.share_enabled ?? true) ? 'bg-blue-600' : 'bg-[#34353a]'}`}
+                onClick={() => setServerPickerOpen(open => !open)}
+                className="relative z-20 flex h-full w-10 items-center justify-center text-gray-500 hover:bg-[#1b1c1f] hover:text-white"
+                title="Open another server"
+                aria-label="Open another server"
               >
-                <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform duration-200 ${(selectedServer.share_enabled ?? true) ? 'translate-x-4' : 'translate-x-0'}`} />
+                <Plus size={16} />
               </button>
+              {serverPickerOpen && (
+                <div className="origin-top-right popover-enter absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border border-[#2a2b2f] bg-[#1c1d21] p-1 shadow-xl">
+                  <div className="p-1">
+                    <input
+                      autoFocus
+                      value={serverSearch}
+                      onChange={event => setServerSearch(event.target.value)}
+                      placeholder="Search servers..."
+                      className="w-full rounded border border-[#2a2b2f] bg-[#0f0f11] px-2.5 py-1.5 text-sm text-white outline-none placeholder:text-gray-600 focus:border-blue-500"
+                    />
+                  </div>
+                  {servers.filter(server =>
+                    server.id &&
+                    !openServerIds.includes(server.id) &&
+                    server.name.toLowerCase().includes(serverSearch.toLowerCase())
+                  ).map(server => (
+                    <button
+                      key={server.id}
+                      onClick={async () => {
+                        if (!(await confirmNavigationAsync())) return;
+                        setSelectedServer(server.id ?? null);
+                        setServerPickerOpen(false);
+                        setServerSearch('');
+                      }}
+                      className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm text-gray-300 hover:bg-[#2a2b2f] hover:text-white"
+                    >
+                      <img src={getSoftwareInfo(server.server_type).icon} alt="" className="h-4 w-4 object-contain" />
+                      <span className="truncate">{server.name}</span>
+                    </button>
+                  ))}
+                  {serverSearch && !servers.some(server => server.id && !openServerIds.includes(server.id) && server.name.toLowerCase().includes(serverSearch.toLowerCase())) && (
+                    <div className="px-3 py-2 text-sm text-gray-500">No matching servers</div>
+                  )}
+                </div>
+              )}
             </div>
           )}
+          {selectedServer && (() => {
+            const hasTunnel = settings?.tunnel_enabled ?? false;
+            const isShared = selectedServer.share_enabled ?? true;
+            return (
+              <div className="sticky right-0 ml-auto flex flex-shrink-0 items-center border-l border-[#2a2b2f] bg-[#141517] px-2 h-full">
+                <div className="mr-2 transition-all duration-200">
+                  {hasTunnel && isShared && !closingShare ? (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`host.hyperplex.de:${selectedServer.port}`);
+                        notify('Public address copied.', 'success', false);
+                      }}
+                      className="flex whitespace-nowrap items-center gap-1.5 px-2 font-mono text-xs text-blue-400 hover:text-blue-300"
+                      title="Copy public address"
+                    >
+                      host.hyperplex.de:{selectedServer.port}
+                      <Copy size={12} className="text-gray-500" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`localhost:${selectedServer.port}`);
+                        notify('Local address copied.', 'success', false);
+                      }}
+                      className="flex whitespace-nowrap items-center gap-1.5 px-2 font-mono text-xs text-gray-400 hover:text-gray-300"
+                      title="Copy local address"
+                    >
+                      localhost:{selectedServer.port}
+                      <Copy size={12} className="text-gray-500" />
+                    </button>
+                  )}
+                </div>
+                {hasTunnel && (
+                  <button
+                    onClick={() => setSharing(!isShared)}
+                    disabled={sharingBusy}
+                    role="switch"
+                    aria-checked={isShared}
+                    title={isShared ? 'Disable public sharing' : 'Enable public sharing'}
+                    className={`relative h-5 w-9 flex-shrink-0 rounded-full transition-colors duration-200 disabled:opacity-50 ${isShared ? 'bg-blue-600' : 'bg-[#34353a]'}`}
+                  >
+                    <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform duration-200 ${isShared ? 'translate-x-4' : 'translate-x-0'}`} />
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
         <AppRoutes />

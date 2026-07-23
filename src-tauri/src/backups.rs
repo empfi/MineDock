@@ -266,6 +266,19 @@ pub fn delete_backup(server_path: &str, backup_name: &str) -> Result<(), String>
     Ok(())
 }
 
+pub fn rename_backup(server_path: &str, old_name: &str, new_name: &str) -> Result<(), String> {
+    let old_path = backup_path(server_path, old_name)?;
+    let mut clean_new_name = new_name.trim().to_string();
+    if !clean_new_name.ends_with(".zip") {
+        clean_new_name.push_str(".zip");
+    }
+    let new_path = backup_path(server_path, &clean_new_name)?;
+    if new_path.exists() {
+        return Err("A backup with that name already exists".into());
+    }
+    std::fs::rename(old_path, new_path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::verify_backup;

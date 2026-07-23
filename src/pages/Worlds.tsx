@@ -9,6 +9,7 @@ import {
 import { useStore } from '../store';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { notify } from '../components/Notifications';
+import { WorldsSkeleton } from '../components/LoadingState';
 
 type WorldInfo = {
   name: string;
@@ -198,7 +199,7 @@ export default function Worlds() {
       )}
 
       {loading && !worlds.length ? (
-        <div className="flex justify-center py-20 text-gray-500"><Loader2 className="animate-spin" /></div>
+        <WorldsSkeleton />
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {worlds.map(world => (

@@ -213,9 +213,16 @@ export default function Assistant() {
     <h1 className="text-xl font-semibold text-white">Connect Assistant</h1>
     <p className="mt-2 text-sm leading-relaxed text-gray-400">Key stays only in MineDock’s Rust process for this session. It is never stored in browser storage or SQLite.</p>
     
-    <div className="mt-5 mb-4 flex rounded-md bg-[#0f0f11] p-0.5 border border-[#2a2b2f]">
-      <button type="button" onClick={() => { setProvider('openrouter'); setError(''); }} className={`flex-1 rounded py-1.5 text-xs font-medium transition-colors ${provider === 'openrouter' ? 'bg-[#2a2b2f] text-white' : 'text-gray-400 hover:text-gray-200'}`}>OpenRouter</button>
-      <button type="button" onClick={() => { setProvider('aws'); setError(''); }} className={`flex-1 rounded py-1.5 text-xs font-medium transition-colors ${provider === 'aws' ? 'bg-[#2a2b2f] text-white' : 'text-gray-400 hover:text-gray-200'}`}>AWS</button>
+    <div className="mt-5 mb-4 flex relative rounded-md bg-[#0f0f11] p-0.5 border border-[#2a2b2f] overflow-hidden select-none">
+      <div 
+        className="absolute top-0.5 bottom-0.5 transition-all duration-200 ease-out bg-[#2a2b2f] rounded" 
+        style={{
+          left: provider === 'aws' ? 'calc(50% + 1px)' : '2px',
+          right: provider === 'aws' ? '2px' : 'calc(50% + 1px)',
+        }}
+      />
+      <button type="button" onClick={() => { setProvider('openrouter'); setError(''); }} className={`relative z-10 flex-1 rounded py-1.5 text-xs font-medium transition-colors ${provider === 'openrouter' ? 'text-white' : 'text-gray-400 hover:text-gray-200'}`}>OpenRouter</button>
+      <button type="button" onClick={() => { setProvider('aws'); setError(''); }} className={`relative z-10 flex-1 rounded py-1.5 text-xs font-medium transition-colors ${provider === 'aws' ? 'text-white' : 'text-gray-400 hover:text-gray-200'}`}>AWS</button>
     </div>
 
     <label className="block"><span className="mb-1.5 block text-xs text-gray-500">Model</span><select value={model} onChange={event => { setModel(event.target.value); localStorage.setItem('minedock:ai_model', event.target.value); }} className="w-full rounded-md border border-[#2a2b2f] bg-[#0f0f11] px-3 py-2.5 text-sm text-white">{modelsByProvider[provider].map(option => <option key={option.id} value={option.id}>{option.label} — {option.detail}</option>)}</select></label>
@@ -232,7 +239,7 @@ export default function Assistant() {
   return <div className="flex h-full flex-col bg-[#0f0f11]">
     <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-[#2a2b2f] px-4">
       <div className="flex items-center gap-3"><MineDockMark className="h-8 w-8" logoText={aiLogo} /><div><h1 className="font-semibold text-white">DockAI</h1><p className="text-xs text-gray-500">{server ? `Working with ${server.name} · ${server.minecraft_version}` : 'Server setup workspace'}</p></div></div>
-      <div className="flex items-center gap-2"><button onClick={newChat} disabled={busy} className="flex h-8 items-center gap-1.5 rounded-md border border-[#303238] bg-[#18191c] px-3 text-xs font-medium text-gray-300 hover:border-[#454850] hover:bg-[#202124] hover:text-white disabled:opacity-40"><Plus size={14} /> New chat</button><select value={model} onChange={event => { setModel(event.target.value); localStorage.setItem('minedock:ai_model', event.target.value); }} className="rounded-md border border-[#2a2b2f] bg-[#141517] px-2.5 py-1.5 text-xs text-gray-300">{modelsByProvider[provider].map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></div>
+      <div className="flex items-center gap-2"><button onClick={newChat} disabled={busy} className="flex h-8 items-center gap-1.5 rounded-md border border-[#303238] bg-[#18191c] px-3 text-xs font-medium text-gray-300 hover:border-[#454850] hover:bg-[#202124] hover:text-white disabled:opacity-40"><Plus size={14} /> New chat</button><select value={model} onChange={event => { setModel(event.target.value); localStorage.setItem('minedock:ai_model', event.target.value); }} className="rounded-md border border-[#2a2b2f] bg-[#141517] px-2.5 h-8 text-xs text-gray-300 focus:outline-none focus:border-blue-500">{modelsByProvider[provider].map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></div>
     </header>
     <main className="select-text flex-1 overflow-y-auto px-4 py-7 sm:px-8">
       <div className="mx-auto max-w-3xl space-y-6">

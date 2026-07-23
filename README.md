@@ -1,99 +1,73 @@
 # MineDock
 
-MineDock is a modern, lightweight Minecraft server manager inspired by panels like Pterodactyl and Pelican, but built entirely as a **local desktop application for Windows**.
+**MineDock** is a fast, clean, and local desktop app for creating and managing Minecraft servers.
 
-With MineDock, you can create, download, configure, start, stop, and manage real Minecraft Java Edition servers locally on your machine without relying on external clouds or paid APIs. It features a modern, dark, minimal interface designed for a professional server-hosting experience right on your desktop.
-
----
-
-### Features
-
-- **Multiple Local Servers**: Manage multiple Minecraft server instances locally.
-- **Server Creation Wizard**: A guided setup for naming, configuring RAM, ports, and accepting the EULA.
-- **Software Downloader**: Installs Vanilla, Paper, Purpur, and Velocity builds from their official download services.
-- **Process Management**: A robust backend written in Rust spawns and tracks your Minecraft servers independently. You can view real-time live console output (stdout/stderr) and issue commands directly.
-- **File Manager**: Browse, edit, create, and delete server files through a secure, built-in visual file manager.
-- **Visual Properties Editor**: An intuitive interface for tweaking `server.properties` alongside a raw configuration editor.
-- **Backups**: Compress and restore entire server directories into `.zip` archives.
-- **Log Viewer**: View `latest.log` instantly inside the application.
-- **Database Driven**: Uses SQLite to persist servers and application settings locally.
+No complex Docker setups, web panels, or messy batch files required—MineDock gives you a modern server panel directly on your desktop.
 
 ---
 
-### Tech Stack
+## ✨ Features
 
-- **Frontend**: React (TypeScript), Tailwind CSS, Zustand, React Router, Vite
-- **Backend / Desktop**: Tauri v2, Rust (Tokio, reqwest, rusqlite, zip, sysinfo)
-- **Database**: SQLite (via `rusqlite`)
-
----
-
-### Windows Requirements
-
-To run MineDock successfully on Windows, you must have:
-
-- **Java**: You need to have Java installed on your system. 
-  - Minecraft 1.20.5 and newer typically require **Java 21**. 
-  - Older modern versions often need Java 17.
-  - *Recommendation*: Install Eclipse Temurin / Adoptium Java 21 from [here](https://adoptium.net/temurin/releases/). Ensure you check "Add to PATH" during installation.
+- **Instant Server Creation**: Download and launch Vanilla, Paper, Purpur, or Velocity servers with a few clicks.
+- **Live Console & Control**: Real-time console logs, instant command execution, and player management (OP, kick, ban).
+- **Built-in File Manager & Properties Editor**: Tweak `server.properties` visually or edit files directly inside the app.
+- **Plugin Marketplace**: Search and install plugins from Modrinth and Hangar right from the interface.
+- **Backup & Restore**: Easily create `.zip` backups of your worlds, verify archive integrity, and restore whenever needed.
+- **DockAI Assistant**: Ask questions, search compatible plugins, or get help configuring your server.
+- **Modern & Classic Themes**: Clean UI customization with smooth transitions and customizable theme settings.
 
 ---
 
-### Setup and Build Instructions
+## 🛠️ Requirements
 
-If you wish to develop or build MineDock from source, ensure you have installed:
+To run Minecraft servers on your machine, you'll need **Java** installed:
+
+- **Minecraft 1.20.5+**: Requires **Java 21** (Recommended: [Eclipse Temurin Java 21](https://adoptium.net/temurin/releases/)).
+- **Older Versions**: Usually require **Java 17** or **Java 8**.
+
+> *Tip: Make sure "Add to PATH" is checked during Java installation.*
+
+---
+
+## 🚀 Development & Building
+
+If you'd like to build MineDock from source or contribute:
+
+### Prerequisites
 - [Node.js](https://nodejs.org/) (v18+)
 - [Rust](https://rustup.rs/) (latest stable)
-- Build tools (Visual Studio C++ Build Tools for Windows)
 
-**1. Clone the repository and install dependencies:**
-```bash
-git clone <repository_url>
-cd minedock
-npm install
-```
+### Steps
 
-**2. Run in Development Mode:**
-This will start both the React frontend (Vite) and the Tauri Rust backend.
-```bash
-npm run tauri dev
-```
+1. **Clone the repository and install dependencies:**
+   ```bash
+   git clone https://github.com/empfi/MineDock.git
+   cd MineDock
+   npm install
+   ```
 
-**3. Build the Application:**
-This compiles the Typescript and builds a production-ready Windows executable.
-```bash
-npm run tauri build
-```
-The compiled executable will be located in `src-tauri/target/release/`.
+2. **Run in Development Mode:**
+   ```bash
+   npm run tauri dev
+   ```
 
----
-
-### How Features Work
-
-#### Server Creation & EULA
-The creation wizard interacts with the Rust backend to dynamically fetch versions, create the server directory, download the jar, and write `eula.txt`. Mojang requires all server operators to accept their EULA before a server can boot; MineDock enforces this agreement explicitly in the UI via the wizard.
-
-#### Version Downloading
-MineDock queries the official Mojang version manifest (`piston-meta.mojang.com/mc/game/version_manifest_v2.json`) to populate the version list. Upon selecting a version, the backend locates the correct download URL for the server jar and streams it to the disk while providing progress updates to the frontend via Tauri events.
-
-#### Process Management
-MineDock spawns Minecraft using `tokio::process::Command` in the Rust backend. It captures `stdout` and `stderr` pipes, forwarding the live lines to the React frontend. It retains a reference to the `stdin` handle, allowing you to send commands to the console gracefully. It avoids unsafe shell string interpolation.
+3. **Build Desktop App:**
+   ```bash
+   npm run tauri build
+   ```
+   The compiled `.exe` will be generated in `src-tauri/target/release/`.
 
 ---
 
-### Known Limitations
+## 💻 Tech Stack
 
-- **Java Only**: Currently designed specifically for Minecraft Java Edition. Bedrock is not supported in v1.
-- **Platform Support**: Built and tested primarily for Windows, though Tauri is cross-platform. 
-- **Resource Monitoring**: Advanced CPU/RAM graphing per process is not fully implemented; it currently displays system totals and allocated limits.
+- **Frontend**: React, TypeScript, Tailwind CSS, Vite
+- **Backend / Desktop**: Tauri v2, Rust (Tokio, Rusqlite, Sysinfo)
+- **Database**: SQLite (local storage)
 
 ---
 
-### Future Roadmap
+## 📄 License
 
-- [ ] **Plugin Marketplace**: Browse and install Spigot/Paper plugins directly from the UI.
-- [ ] **Scheduled Backups**: Set up cron-like schedules for automated world backups.
-- [ ] **Per-Server Resource Graphs**: Granular monitoring of CPU and RAM usage for specific server processes.
-- [ ] **Docker/Linux Support**: Run instances inside Docker containers for isolation (pterodactyl-style).
-- [ ] **Remote Node Support**: Connect the desktop app to a remote daemon to manage off-site servers.
-- [ ] **Auto Java Installer**: Automatically detect missing Java dependencies and offer to download and extract them locally.
+Open-source under the MIT License. Feel free to use, modify, and share!
+

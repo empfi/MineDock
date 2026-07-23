@@ -1,6 +1,159 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --theme-bg: #141517;
+  --theme-card: #1c1d21;
+  --theme-border: #2a2b2f;
+  --theme-input: #0f0f11;
+
+  --radius-sm: 0.125rem;
+  --radius-md: 0.25rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+  
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+[data-theme="modern"] {
+  --theme-bg: #1d1e22; /* Clean lighter carbon background */
+  --theme-card: #25272f; /* Even lighter card background */
+  --theme-sidebar: #131417; /* Original dark grey for sidebar and header */
+  --theme-border: rgba(255, 255, 255, 0.08); /* Frosted borders */
+  --theme-input: #0e0f11; /* Classic dark input background */
+  --accent: #ffffff; /* Minimalist White accent */
+  --accent-glow: rgba(255, 255, 255, 0.15);
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem; /* Sleek rounded corners */
+  --radius-lg: 0.875rem; /* Large card rounding */
+  --radius-xl: 1.125rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
+  
+  --font-sans: 'Outfit', 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Set global styling overrides for modern theme */
+[data-theme="modern"] body {
+  background-color: var(--theme-bg) !important;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Explicit CSS overrides for Tailwind's border radius classes (bypasses dev-server JIT compilation limitations) */
+[data-theme="modern"] .rounded-sm { border-radius: var(--radius-sm) !important; }
+[data-theme="modern"] .rounded { border-radius: var(--radius-md) !important; }
+[data-theme="modern"] .rounded-md { border-radius: var(--radius-md) !important; }
+[data-theme="modern"] .rounded-lg { border-radius: var(--radius-lg) !important; }
+[data-theme="modern"] .rounded-xl { border-radius: var(--radius-xl) !important; }
+[data-theme="modern"] .rounded-2xl { border-radius: var(--radius-2xl) !important; }
+[data-theme="modern"] .rounded-3xl { border-radius: var(--radius-3xl) !important; }
+
+/* Map sidebar, header, and share bar to the darker theme background, other gray areas to workspace background */
+[data-theme="modern"] .bg-\[\#141517\].border-r,
+[data-theme="modern"] .bg-\[\#141517\].border-b,
+[data-theme="modern"] .bg-\[\#141517\].border-l { 
+  background-color: var(--theme-sidebar) !important; 
+}
+[data-theme="modern"] .bg-\[\#141517\]:not(.border-r):not(.border-b):not(.border-l) { 
+  background-color: var(--theme-bg) !important; 
+}
+[data-theme="modern"] .bg-\[\#1c1d21\] { background-color: var(--theme-card) !important; }
+[data-theme="modern"] .bg-\[\#0f0f11\] { background-color: var(--theme-input) !important; }
+[data-theme="modern"] .bg-\[\#0a0a0c\] { background-color: var(--theme-input) !important; }
+
+/* Thinner and cleaner borders for modern theme */
+[data-theme="modern"] .border-\[\#2a2b2f\] { border-color: var(--theme-border) !important; }
+[data-theme="modern"] .divide-\[\#2a2b2f\] > * + * { border-color: var(--theme-border) !important; }
+
+/* Modern layout: Sidebar links redesigned completely to use white-glass highlights */
+[data-theme="modern"] nav a {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: var(--radius-md) !important;
+  margin-bottom: 2px;
+}
+[data-theme="modern"] nav a.active {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+  font-weight: 600;
+}
+[data-theme="modern"] nav a:hover:not(.active) {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  color: #fff !important;
+}
+
+/* Modern theme specific button styling (Solid white with black text, excluding toggle switches) */
+[data-theme="modern"] button.bg-blue-600:not([role="switch"]) {
+  background-color: #ffffff !important;
+  background-image: none !important;
+  color: #0c0c0e !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+  border: none !important;
+  font-weight: 600 !important;
+  opacity: 1 !important;
+}
+[data-theme="modern"] button.bg-blue-600:disabled:not([role="switch"]) {
+  background-color: #2b2c34 !important;
+  color: #6b6c72 !important;
+  box-shadow: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.05) !important;
+  opacity: 0.5 !important;
+}
+[data-theme="modern"] button.hover\:bg-blue-700:hover:not(:disabled):not([role="switch"]) {
+  background-color: #e5e7eb !important;
+  background-image: none !important;
+  transform: translateY(-1.2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Cleaner Modern Card visual structure */
+[data-theme="modern"] .bg-\[\#1c1d21\] {
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--theme-border) !important;
+  backdrop-filter: blur(12px);
+  background-color: rgba(38, 40, 47, 0.9) !important;
+}
+
+/* Force composer textarea to remain borderless and clean */
+[data-theme="modern"] .assistant-composer {
+  border-radius: var(--radius-lg) !important;
+  border-color: var(--theme-border) !important;
+  background-color: var(--theme-input) !important;
+}
+[data-theme="modern"] .assistant-composer textarea {
+  border: none !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+
+/* Inputs and Forms modern refinements */
+[data-theme="modern"] input[type="text"], 
+[data-theme="modern"] input[type="number"], 
+[data-theme="modern"] input[type="password"], 
+[data-theme="modern"] input[type="search"],
+[data-theme="modern"] textarea,
+[data-theme="modern"] select {
+  border-radius: var(--radius-md) !important;
+  border-color: var(--theme-border) !important;
+  background-color: var(--theme-input) !important;
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+[data-theme="modern"] input:focus, 
+[data-theme="modern"] textarea:focus,
+[data-theme="modern"] select:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent-glow) !important;
+}
+
 
 .action-button {
   display: inline-flex;

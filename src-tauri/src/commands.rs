@@ -1,6 +1,6 @@
 use crate::backups::{
     create_backup, delete_backup as del_backup, list_backups, restore_backup, restore_backup_clean,
-    verify_backup, BackupInfo, BackupVerification,
+    verify_backup, BackupInfo, BackupVerification, rename_backup,
 };
 use crate::database::{
     add_server, delete_server, get_server, get_servers, get_settings, update_server_port,
@@ -745,6 +745,11 @@ pub async fn restore_safe_apply_backup(
 #[tauri::command]
 pub fn remove_mc_backup(server_path: String, backup_name: String) -> Result<(), String> {
     del_backup(&server_path, &backup_name)
+}
+
+#[tauri::command]
+pub fn rename_mc_backup(server_path: String, old_name: String, new_name: String) -> Result<(), String> {
+    rename_backup(&server_path, &old_name, &new_name)
 }
 
 #[tauri::command]

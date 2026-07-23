@@ -6,6 +6,7 @@ import { Download, Loader2, AlertTriangle } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 import { safeApply } from '../lib/safeApply';
 import { reportInstall } from '../components/ProgressHub';
+import { ListSkeleton } from '../components/LoadingState';
 
 interface VersionManifest {
   latest: { release: string; snapshot: string };
@@ -258,10 +259,7 @@ export default function Versions() {
 
       <div className="flex-1 overflow-y-auto bg-[#1c1d21] border border-[#2a2b2f] rounded-lg">
         {loading ? (
-          <div className="flex flex-col items-center justify-center h-64 text-gray-400">
-            <Loader2 size={32} className="animate-spin mb-4 text-blue-500" />
-            <p>Fetching versions manifest...</p>
-          </div>
+          <ListSkeleton rows={8} />
         ) : (
           <table className="w-full text-left">
             <thead className="bg-[#141517] border-b border-[#2a2b2f] text-xs font-semibold text-gray-400 uppercase tracking-wider sticky top-0">

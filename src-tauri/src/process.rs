@@ -321,6 +321,9 @@ impl ProcessManager {
                     "/data",
                     &docker_image,
                     "java",
+                    "-Dterminal.jline=false",
+                    "-Dlog4j.skipJansi=true",
+                    "-Dfile.encoding=UTF-8",
                     &format!("-Xms{}M", server.ram_min),
                     &format!("-Xmx{}M", server.ram_max),
                 ]);
@@ -335,6 +338,9 @@ impl ProcessManager {
         } else {
             let mut cmd = Command::new(&server.java_path);
             cmd.current_dir(&server.install_path)
+                .arg("-Dterminal.jline=false")
+                .arg("-Dlog4j.skipJansi=true")
+                .arg("-Dfile.encoding=UTF-8")
                 .arg(format!("-Xms{}M", server.ram_min))
                 .arg(format!("-Xmx{}M", server.ram_max));
             if server.jar_path.starts_with('@') {

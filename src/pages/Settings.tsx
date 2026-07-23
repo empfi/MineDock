@@ -14,6 +14,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testingRelay, setTestingRelay] = useState(false);
   const [backupBeforeInstall, setBackupBeforeInstall] = useState(localStorage.getItem('minedock:backup_before_install') === 'true');
+  const [theme, setTheme] = useState(localStorage.getItem('minedock-theme') || 'classic');
 
   useEffect(() => {
     if (settings) {
@@ -27,6 +28,8 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       localStorage.setItem('minedock:backup_before_install', String(backupBeforeInstall));
+      localStorage.setItem('minedock-theme', theme);
+      document.documentElement.setAttribute('data-theme', theme);
       await invoke('save_settings', { settings: localSettings });
       await fetchSettings();
       notify('Settings saved.', 'success', false);
@@ -38,9 +41,11 @@ export default function SettingsPage() {
   };
 
   const backupSettingStored = localStorage.getItem('minedock:backup_before_install') === 'true';
+  const themeStored = localStorage.getItem('minedock-theme') || 'classic';
   const dirty = Boolean(
     (settings && localSettings && JSON.stringify(settings) !== JSON.stringify(localSettings)) ||
-    (backupBeforeInstall !== backupSettingStored)
+    (backupBeforeInstall !== backupSettingStored) ||
+    (theme !== themeStored)
   );
   const errors = localSettings ? [
     ...(localSettings.default_ram_min > localSettings.default_ram_max ? ['Minimum RAM cannot exceed maximum RAM.'] : []),
@@ -278,6 +283,19 @@ export default function SettingsPage() {
               <span className="text-gray-300">Create restore points before plugin/software installations</span>
             </label>
 
+            <div className="pt-4 border-t border-[#2a2b2f] mt-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">Visual Theme</label>
+              <select
+                value={theme}
+                onChange={e => setTheme(e.target.value)}
+                className="w-full bg-[#0f0f11] border border-[#2a2b2f] rounded-md px-3 py-2 text-white focus:outline-none focus:border-blue-500 max-w-xs"
+              >
+                <option value="classic">Classic Theme (Original)</option>
+                <option value="modern">Modern Theme (Rounded, Sleek)</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">Changes overall UI style, border radius, and page backgrounds.</p>
+            </div>
+
           </div>
         </div>
       </div>
@@ -288,6 +306,7 @@ export default function SettingsPage() {
         onReset={() => {
           if (settings) setLocalSettings({...settings});
           setBackupBeforeInstall(localStorage.getItem('minedock:backup_before_install') === 'true');
+          setTheme(localStorage.getItem('minedock-theme') || 'classic');
         }}
         saveDisabled={errors.length > 0}
       />

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, Copy, ListMinus, ListPlus, Search, ShieldCheck, ShieldOff, UserX, Users, X } from 'lucide-react';
+import { Check, Copy, ListMinus, ListPlus, Search, ShieldCheck, ShieldOff, UserX, Users, X, Crown } from 'lucide-react';
 import { useStore } from '../store';
 import FieldError from '../components/FieldError';
 import { notify } from '../components/Notifications';
@@ -118,6 +118,19 @@ export default function Players() {
     }
   };
 
+  const toggleOp = async () => {
+    if (!selectedServerId || !selected || !server || server.status !== 'online') return;
+    const command = `${info?.is_op ? 'deop' : 'op'} ${selected}`;
+    try {
+      await invoke('send_mc_command', { id: selectedServerId, command });
+      appendConsoleLog(selectedServerId, `> ${command}`, false);
+      setInfo(current => current ? { ...current, is_op: !current.is_op } : current);
+      notify(`${selected} ${info?.is_op ? 'demoted from' : 'promoted to'} Operator.`, 'success');
+    } catch (cause) {
+      notify(String(cause), 'error');
+    }
+  };
+
   if (!server) return <div className="p-8 text-center text-gray-500">Select a server first.</div>;
 
   return (
@@ -127,14 +140,29 @@ export default function Players() {
         <p className="text-gray-400">{server.name} · {players.length} online</p>
       </div>
 
-      <div className="flex max-w-2xl gap-2 mb-6">
-        <label className="relative block flex-1">
-          <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-          <input type="search" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => event.key === 'Enter' && searchMinecraft()} placeholder="Search local or any Minecraft player" aria-invalid={!!usernameError} aria-describedby="player-username-error" className="w-full bg-[#141517] border border-[#2a2b2f] rounded-md py-2.5 pl-10 pr-3 text-sm text-white outline-none focus:border-blue-500" />
+      <div className="flex max-w-2xl gap-2 mb-6 items-start w-full">
+        <div className="flex-1 min-w-0">
+          <div className="relative">
+            <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input 
+              type="search" 
+              value={query} 
+              onChange={event => setQuery(event.target.value)} 
+              onKeyDown={event => event.key === 'Enter' && searchMinecraft()} 
+              placeholder="Search local or any Minecraft player" 
+              aria-invalid={!!usernameError} 
+              aria-describedby="player-username-error" 
+              className="w-full h-10 bg-[#141517] border border-[#2a2b2f] rounded-md pl-10 pr-3 text-sm text-white outline-none focus:border-blue-500" 
+            />
+          </div>
           <FieldError id="player-username-error" message={usernameError} />
-        </label>
+        </div>
         <span title={!/^[A-Za-z0-9_]{3,16}$/.test(query.trim()) ? 'Enter a valid 3–16 character Minecraft username.' : 'Search Mojang player directory'} className="flex cursor-help">
-          <button onClick={searchMinecraft} disabled={searching || !/^[A-Za-z0-9_]{3,16}$/.test(query.trim())} className="px-4 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-40 disabled:cursor-help">
+          <button 
+            onClick={searchMinecraft} 
+            disabled={searching || !/^[A-Za-z0-9_]{3,16}$/.test(query.trim())} 
+            className="px-4 h-10 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-40 disabled:cursor-help"
+          >
             {searching ? 'Searching…' : 'Search Mojang'}
           </button>
         </span>
@@ -197,6 +225,11 @@ export default function Players() {
                 <span title={!info?.whitelist_enabled ? 'Enable whitelist in server.properties before managing it.' : info.whitelisted ? 'Remove player from whitelist' : 'Add player to whitelist'} className={!info?.whitelist_enabled ? 'cursor-help' : ''}>
                   <button disabled={!info?.whitelist_enabled} onClick={toggleWhitelist} className="flex items-center gap-2 px-4 py-2 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 disabled:opacity-40 disabled:cursor-help">
                     {info?.whitelisted ? <ListMinus size={16} /> : <ListPlus size={16} />} {info?.whitelisted ? 'Remove whitelist' : 'Whitelist'}
+                  </button>
+                </span>
+                <span title={server.status === 'online' ? (info?.is_op ? 'Remove operator status' : 'Make operator') : 'Server must be online to toggle OP status.'} className={server.status !== 'online' ? 'cursor-help' : ''}>
+                  <button disabled={server.status !== 'online'} onClick={toggleOp} className="flex items-center gap-2 px-4 py-2 rounded-md bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 disabled:opacity-40 disabled:cursor-help">
+                    <Crown size={16} /> {info?.is_op ? 'De-OP' : 'OP'}
                   </button>
                 </span>
                 <span title={isOnline ? 'Kick player' : 'Player must be online to kick them.'} className={!isOnline ? 'cursor-help' : ''}>

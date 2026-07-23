@@ -6,6 +6,7 @@ import { useStore } from '../store';
 import { notify } from '../components/Notifications';
 import { safeApply } from '../lib/safeApply';
 import { reportInstall } from '../components/ProgressHub';
+import { ModalVersionsSkeleton } from '../components/LoadingState';
 
 type InstalledPlugin = { file_name: string; name: string; version: string; description: string; enabled: boolean; icon_url?: string; source?: string; project_id?: string; latest_version?: string; update_available: boolean };
 type MarketplacePlugin = { source: string; id: string; name: string; description: string; icon_url?: string; downloads: number };
@@ -338,7 +339,7 @@ export default function Additions() {
             <div className="flex items-center justify-between border-b border-[#2a2b2f] p-4"><div><div className="font-semibold text-white">Update {updatePlugin.name}</div><div className="text-xs text-gray-500">Installed: {updatePlugin.version}</div></div><button onClick={() => setUpdatePlugin(null)} className="text-gray-500 hover:text-white"><X size={18} /></button></div>
             <div className="p-3"><div className="relative"><Search size={15} className="absolute left-3 top-2.5 text-gray-600" /><input autoFocus value={versionSearch} onChange={event => setVersionSearch(event.target.value)} placeholder="Search versions..." className="w-full rounded-md border border-[#2a2b2f] bg-[#0f0f11] py-2 pl-9 pr-3 text-sm text-white outline-none focus:border-blue-500" /></div></div>
             <div className="flex-1 overflow-y-auto border-t border-[#2a2b2f]">
-              {versionsLoading ? <div className="flex justify-center py-16"><Loader2 className="animate-spin text-blue-500" /></div> :
+              {versionsLoading ? <ModalVersionsSkeleton /> :
                 versions.filter(item => item.version.toLowerCase().includes(versionSearch.toLowerCase())).map(item => (
                   <button key={item.version} onClick={async () => {
                     setUpdatePlugin(null);

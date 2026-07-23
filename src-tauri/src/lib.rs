@@ -123,6 +123,7 @@ pub fn run() {
             commands::restore_mc_backup,
             commands::restore_safe_apply_backup,
             commands::remove_mc_backup,
+            commands::rename_mc_backup,
             commands::accept_eula,
             commands::get_system_memory,
             commands::get_server_disk_usage,

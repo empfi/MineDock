@@ -19,7 +19,7 @@ pub struct Server {
     pub created_at: String,
     pub last_started_at: Option<String>,
     pub port: i32,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub share_enabled: bool,
     #[serde(default)]
     pub run_in_container: bool,

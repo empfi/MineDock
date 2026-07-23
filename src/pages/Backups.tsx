@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { invoke } from '@tauri-apps/api/core';
-import { Database, Plus, Trash2, RotateCcw, Loader2, ShieldCheck } from 'lucide-react';
+import { Database, Plus, Trash2, RotateCcw, Loader2, ShieldCheck, Pencil } from 'lucide-react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { notify } from '../components/Notifications';
 import EmptyState from '../components/EmptyState';
@@ -33,6 +33,9 @@ export default function Backups() {
   const [loadError, setLoadError] = useState('');
   const [query, setQuery] = useState(() => localStorage.getItem('minedock:backups_query') || '');
   const [sort, setSort] = useState(() => localStorage.getItem('minedock:backups_sort') || 'newest');
+
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   // Use a ref to track the current load request so stale calls don't flip loading back on
   const loadingRef = useRef(false);
@@ -103,6 +106,27 @@ export default function Backups() {
     catch (error) { notify('Failed to delete backup: ' + error, 'error'); }
   };
 
+  const handleRenameSave = async (oldName: string) => {
+    if (!selectedServer || !renameValue.trim()) return;
+    const cleanNewName = renameValue.trim();
+    if (cleanNewName === oldName.replace(/\.zip$/i, '')) {
+      setRenaming(null);
+      return;
+    }
+    try {
+      await invoke('rename_mc_backup', {
+        serverPath: selectedServer.install_path,
+        oldName,
+        newName: cleanNewName,
+      });
+      notify('Backup renamed.', 'success');
+      setRenaming(null);
+      loadBackups();
+    } catch (error) {
+      notify('Failed to rename backup: ' + error, 'error');
+    }
+  };
+
   const verify = async (name: string) => {
     if (!selectedServer) return;
     setVerifying(name);
@@ -169,9 +193,28 @@ export default function Backups() {
               {visibleBackups.map(backup => (
                 <tr key={backup.name} className="h-14 hover:bg-[#202124] transition-colors group">
                   <td className="px-6 py-4 font-medium text-white flex items-center gap-3">
-                    <Database size={18} className="text-blue-400" />
-                    {backup.name}
-                    {verified[backup.name] && <span className={verified[backup.name] === 'Invalid' ? 'text-xs text-red-400' : 'text-xs text-emerald-400'}>{verified[backup.name]}</span>}
+                    <Database size={18} className="text-blue-400 shrink-0" />
+                    {renaming === backup.name ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          autoFocus
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onKeyDown={async e => {
+                            if (e.key === 'Enter') handleRenameSave(backup.name);
+                            else if (e.key === 'Escape') setRenaming(null);
+                          }}
+                          className="rounded border border-[#2a2b2f] bg-[#0f0f11] px-2 py-1 text-sm text-white outline-none focus:border-blue-500 font-sans"
+                        />
+                        <button onClick={() => handleRenameSave(backup.name)} className="text-xs text-blue-400 hover:text-blue-300 font-sans font-medium">Save</button>
+                        <button onClick={() => setRenaming(null)} className="text-xs text-gray-500 hover:text-gray-400 font-sans">Cancel</button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="truncate max-w-[20rem]" title={backup.name}>{backup.name}</span>
+                        {verified[backup.name] && <span className={verified[backup.name] === 'Invalid' ? 'text-xs text-red-400' : 'text-xs text-emerald-400'}>{verified[backup.name]}</span>}
+                      </>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-gray-400">{formatBytes(backup.size)}</td>
                   <td className="px-6 py-4 text-gray-400 text-sm">
@@ -179,6 +222,11 @@ export default function Backups() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {renaming !== backup.name && (
+                        <button onClick={() => { setRenaming(backup.name); setRenameValue(backup.name.replace(/\.zip$/i, '')); }} disabled={!!actionInProgress} className="p-1.5 text-gray-500 hover:text-blue-400 hover:bg-[#2a2b2f] rounded disabled:opacity-50" title="Rename backup">
+                          <Pencil size={16} />
+                        </button>
+                      )}
                       <button onClick={() => verify(backup.name)} disabled={!!actionInProgress || verifying === backup.name} className="p-1.5 text-gray-500 hover:text-emerald-400 hover:bg-[#2a2b2f] rounded disabled:opacity-50" title="Verify backup">
                         {verifying === backup.name ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
                       </button>
